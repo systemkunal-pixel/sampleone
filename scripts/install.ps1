@@ -38,6 +38,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $DbPortGiven = $PSBoundParameters.ContainsKey('DbPort')
+$PortGiven = $PSBoundParameters.ContainsKey('Port')
 $DbUser = 'recovery'
 $TaskName = 'LoanRecovery'
 $SrcDir = Split-Path -Parent $PSScriptRoot
@@ -66,6 +67,21 @@ function Write-TextFile([string]$Path, [string]$Text) {
 function Protect-File([string]$Path) {
   # Only Administrators and SYSTEM (the account the server runs as) may read it.
   & icacls.exe $Path /inheritance:r /grant:r '*S-1-5-32-544:F' '*S-1-5-18:F' | Out-Null
+}
+
+# Can this program listen on the port? Windows reserves port ranges for Hyper-V/WSL/Docker, which gives
+# "EACCES: permission denied" even though nothing else is using the port.
+function Test-PortFree([int]$Number, [string]$BindAddress) {
+  $listener = New-Object Net.Sockets.TcpListener ([Net.IPAddress]::Parse($BindAddress)), $Number
+  try { $listener.Start(); return $true } catch { return $false } finally { try { $listener.Stop() } catch { Write-Verbose 'listener not started' } }
+}
+
+function Stop-AppServer {
+  Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
+    Where-Object { $_.CommandLine -like '*server\index.js*' -or $_.CommandLine -like '*server/index.js*' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  Start-Sleep -Seconds 1
 }
 
 function Invoke-Winget([string]$Id) {
@@ -330,6 +346,24 @@ Invoke-Sql ("CREATE DATABASE IF NOT EXISTS $DbName CHARACTER SET utf8mb4 COLLATE
 
 $listenHost = '127.0.0.1'
 if ($Public) { $listenHost = '0.0.0.0' }
+
+# Web port: keep the one from an earlier install unless -Port was given, and make sure Windows allows it.
+Stop-AppServer
+if (-not $PortGiven -and (Test-Path $envFile)) {
+  $m = Select-String -Path $envFile -Pattern '^PORT=(\d+)' | Select-Object -First 1
+  if ($m) { $Port = [int]$m.Matches[0].Groups[1].Value }
+}
+if (-not (Test-PortFree $Port $listenHost)) {
+  if ($PortGiven) {
+    Fail "Port $Port cannot be used on this PC (Windows reserves it, or another program uses it). Re-run with another port, e.g. -Port 8090."
+  }
+  $blocked = $Port
+  $candidates = @(8080..8099) + @(8180..8199) + @(9080..9099) + @(5080..5099)
+  $Port = $candidates | Where-Object { $_ -ne $blocked -and (Test-PortFree $_ $listenHost) } | Select-Object -First 1
+  if (-not $Port) { Fail 'No free web port found between 8080 and 9099. Re-run with -Port <a free port>.' }
+  Note "Port $blocked is blocked on this PC (Windows reserves it, often for Hyper-V, WSL or Docker). Using port $Port instead."
+}
+Write-Host "Web port: $Port"
 Write-TextFile $envFile @"
 # Written by scripts/install.ps1 on $(Get-Date -Format 'yyyy-MM-dd HH:mm'). Keep this file private.
 PORT=$Port
@@ -389,6 +423,8 @@ if ($AdminPass) {
   if ($Demo) { $cred += 'Demo field logins: FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999)' }
 }
 if ($cred.Count) {
+  $cred = @($cred | Where-Object { $_ -notmatch '^Admin console:' })
+  if ($cred.Count -and $cred[0] -match '^Loan Recovery') { $cred = @($cred[0], "Admin console: http://localhost:$Port/admin/") + @($cred | Select-Object -Skip 1) }
   if ($cred[0] -notmatch '^Loan Recovery') { $cred = @("Loan Recovery credentials - updated $stamp", "Admin console: http://localhost:$Port/admin/") + $cred }
   else { $cred[0] = "Loan Recovery credentials - updated $stamp" }
   Write-TextFile $CredFile (($cred -join "`r`n") + "`r`n")
@@ -397,10 +433,7 @@ if ($cred.Count) {
 
 # ------------------------------------------------------------------ background service
 Step 'Starting the Loan Recovery server'
-Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
-  Where-Object { $_.CommandLine -like '*server\index.js*' -or $_.CommandLine -like '*server/index.js*' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Stop-AppServer
 
 $log = Join-Path $AppDir 'logs\server.log'
 $action = New-ScheduledTaskAction -Execute 'cmd.exe' -WorkingDirectory $AppDir `
