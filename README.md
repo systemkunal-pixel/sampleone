@@ -10,6 +10,21 @@ A loan collection system with three parts:
 
 No build step is needed. The app is plain HTML, CSS and JavaScript, and the server's only runtime dependencies are `mariadb` and `exceljs`.
 
+## Quick install (Ubuntu / Debian)
+
+One script installs everything on a fresh machine: Node.js 22, MariaDB, the database and its user (with a random password), and the app in `/opt/loan-recovery`. It also creates the first admin and starts the server on port 8080 as a service.
+
+```bash
+git clone -b claude/eager-ride-t1oaiq https://github.com/systemkunal-pixel/sampleone.git ~/sampleone
+sudo bash ~/sampleone/scripts/install.sh --demo        # --demo adds sample data; leave it out for production
+```
+
+At the end it prints the admin password, which is also saved in `/root/loan-recovery-credentials.txt` (readable by root only). Open `http://localhost:8080/admin/` and sign in as **ADMIN**.
+
+- **HTTPS on a public server:** point your domain's DNS at the machine, open ports 80 and 443, then run `sudo bash ~/sampleone/scripts/install.sh --domain recovery.example.com`. Caddy obtains the certificate.
+- **Updating:** `git -C ~/sampleone pull && sudo bash ~/sampleone/scripts/install.sh`. The database, data and passwords are kept.
+- **Other options:** `--port`, `--app-dir`, `--db-name`, and `--public` (listen on your network without HTTPS, for testing only). Run with `--help` to see them all.
+
 ## What each role can do
 
 **Field officer** (phone, 4–8 digit PIN)
