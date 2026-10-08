@@ -37,6 +37,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+$DbPortGiven = $PSBoundParameters.ContainsKey('DbPort')
 $DbUser = 'recovery'
 $TaskName = 'LoanRecovery'
 $SrcDir = Split-Path -Parent $PSScriptRoot
@@ -120,10 +121,19 @@ function Get-DbServer {
     $client = @('mariadb.exe', 'mysql.exe') | ForEach-Object { "$bin\$_" } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     $adminTool = @('mariadb-admin.exe', 'mysqladmin.exe') | ForEach-Object { "$bin\$_" } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     $version = ''
-    if (Test-Path -LiteralPath $exe) { $version = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion }
+    $product = ''
+    if (Test-Path -LiteralPath $exe) {
+      $info = (Get-Item -LiteralPath $exe).VersionInfo
+      $version = $info.ProductVersion
+      $product = $info.ProductName
+    }
     if (-not $version) { $version = ($bin -split '[\\/]')[-2] }
+    # The app needs MariaDB 10.6+ (JSON checks, ADD COLUMN IF NOT EXISTS). Old MySQL servers are listed but not used.
+    $isMaria = ($exe -match 'maria') -or ($product -match 'MariaDB') -or ($_.Name -match 'maria')
+    $usable = $false
+    if ($isMaria -and $version -match '(\d+)\.(\d+)') { $usable = ([int]$Matches[1] -gt 10) -or ([int]$Matches[1] -eq 10 -and [int]$Matches[2] -ge 6) }
     [pscustomobject]@{ Service = $_.Name; State = $_.State; Version = $version; Port = $port; DataDir = $dataDir
-                       Exe = $exe; Ini = $ini; Client = $client; AdminTool = $adminTool }
+                       Usable = $usable; Exe = $exe; Ini = $ini; Client = $client; AdminTool = $adminTool }
   }
 }
 
@@ -136,13 +146,23 @@ if (-not $instances.Count) {
   if (-not $instances.Count) { Fail 'MariaDB did not install. Install it from https://mariadb.org/download/ (keep "Install as service" ticked), then re-run.' }
 }
 Write-Host 'Database servers found on this PC:'
-$instances | Format-Table Service, State, Version, Port, DataDir -AutoSize | Out-String | Write-Host
+$instances | Format-Table Service, State, Version, Port, DataDir, @{ Label = 'Usable'; Expression = { if ($_.Usable) { 'yes' } else { 'no (needs MariaDB 10.6+)' } } } -AutoSize |
+  Out-String | Write-Host
 
-$inst = $instances | Where-Object { $_.Port -eq $DbPort } | Select-Object -First 1
-if (-not $inst) {
-  if ($instances.Count -eq 1 -and -not $PSBoundParameters.ContainsKey('DbPort')) { $inst = $instances[0] }
-  else { Fail "No database service uses port $DbPort. Re-run with -DbPort <port> to choose one of the servers listed above." }
+if ($DbPortGiven) {
+  $inst = $instances | Where-Object { $_.Port -eq $DbPort } | Select-Object -First 1
+  if (-not $inst) { Fail "No database service uses port $DbPort. Choose one of the ports listed above." }
+} else {
+  # Not told which one: the server on 3306 if it is usable, otherwise the only usable MariaDB.
+  $inst = $instances | Where-Object { $_.Port -eq 3306 -and $_.Usable } | Select-Object -First 1
+  if (-not $inst) {
+    $usableList = @($instances | Where-Object { $_.Usable })
+    if ($usableList.Count -eq 1) { $inst = $usableList[0] }
+    elseif ($usableList.Count -gt 1) { Fail 'Several MariaDB servers are installed. Re-run with -DbPort <port> to choose one of those marked usable above.' }
+    else { Fail 'None of the database servers above is MariaDB 10.6 or newer. Install MariaDB from https://mariadb.org/download/ and re-run.' }
+  }
 }
+if (-not $inst.Usable) { Fail "The server on port $($inst.Port) ($($inst.Version)) is not MariaDB 10.6 or newer, which this app needs. Choose a server marked usable above." }
 $DbPort = $inst.Port
 if (-not $inst.Client) { Fail "Could not find mariadb.exe or mysql.exe next to $($inst.Exe)." }
 $DbClient = $inst.Client
@@ -243,6 +263,11 @@ if ($null -eq $RootPass) {
       "If you have forgotten it, re-run the same command with -ResetRootPassword added.")
   }
 }
+$live = Invoke-Sql 'SELECT VERSION()' $RootPass
+if ($live -notmatch 'MariaDB' -or $live -notmatch '^(\d+)\.(\d+)' -or -not (([int]$Matches[1] -gt 10) -or ([int]$Matches[1] -eq 10 -and [int]$Matches[2] -ge 6))) {
+  Fail "The server on port $DbPort reports version '$live'. This app needs MariaDB 10.6 or newer."
+}
+Write-Host "Connected to MariaDB $live on port $DbPort."
 if ($RootPass -eq '') {
   # Fresh MariaDB with no root password: secure it now.
   $newRootPass = New-Secret 24
