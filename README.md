@@ -43,7 +43,9 @@ powershell -ExecutionPolicy Bypass -File C:\src\sampleone\scripts\install.ps1 -D
 - **Testing from phones on your Wi-Fi:** add `-Public` to open the firewall port. Without HTTPS, phones can't use the camera, GPS or install the app.
 - **Updating:** `git -C C:\src\sampleone pull`, then run the same `install.ps1` command again. Data and passwords are kept.
 - **Logs and control:** the log is at `C:\LoanRecovery\logs\server.log`. Stop or start the server with `Stop-ScheduledTask LoanRecovery` / `Start-ScheduledTask LoanRecovery`.
-- **MariaDB already installed:** add `-DbRootPassword <password>`, or the script will ask for it.
+- **MariaDB already installed:** the script lists every database server it finds (service, version, port, data folder) and says which one it uses. It asks for that server's root password (3 tries); you can also pass `-DbRootPassword '<password>'`.
+- **Forgotten root password:** add `-ResetRootPassword`. The MariaDB service stops for about a minute while a new root password is set (saved in `credentials.txt`); databases and data are kept.
+- **Several servers installed:** pick one with `-DbPort 3307`. The script refuses to continue if another program (e.g. XAMPP's MySQL) holds the chosen port.
 
 ## What each role can do
 

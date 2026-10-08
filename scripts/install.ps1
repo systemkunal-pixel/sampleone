@@ -17,7 +17,9 @@
 .PARAMETER AppDir          Install folder (default C:\LoanRecovery). Pass the project folder itself to run the app in place.
 .PARAMETER Port            HTTP port (default 8080).
 .PARAMETER DbName          Database name (default loan_recovery).
+.PARAMETER DbPort          Port of the MariaDB server to use, if several are installed (default 3306).
 .PARAMETER DbRootPassword  MariaDB root password, if MariaDB was already installed before (you are asked if needed).
+.PARAMETER ResetRootPassword  Forgotten the MariaDB root password? Sets a new one (saved in credentials.txt); data is kept.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '', Justification = 'Passwords go to the MariaDB client as text; normally entered via a hidden prompt.')]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Installer script, not a module.')]
@@ -28,7 +30,9 @@ param(
   [string]$AppDir = 'C:\LoanRecovery',
   [int]$Port = 8080,
   [string]$DbName = 'loan_recovery',
-  [string]$DbRootPassword
+  [int]$DbPort = 3306,
+  [string]$DbRootPassword,
+  [switch]$ResetRootPassword
 )
 
 $ErrorActionPreference = 'Stop'
@@ -96,32 +100,71 @@ $Npm = Join-Path (Split-Path $Node) 'npm.cmd'
 Write-Host "Node.js $(& $Node -v) at $Node"
 
 # ------------------------------------------------------------------ MariaDB
-function Find-DbClient {
-  $exe = Get-ChildItem -Path 'C:\Program Files\MariaDB*\bin\mariadb.exe', 'C:\Program Files\MariaDB*\bin\mysql.exe' -ErrorAction SilentlyContinue |
-    Sort-Object FullName -Descending | Select-Object -First 1
-  if ($exe) { return $exe.FullName }
-  return $null
+# Every MariaDB/MySQL server installed as a Windows service, with its port and data folder (read from its my.ini).
+function Get-DbServer {
+  Get-CimInstance Win32_Service | Where-Object { $_.PathName -match '(mysqld|mariadbd)(\.exe)?' } | ForEach-Object {
+    $path = $_.PathName
+    if ($path -match '^\s*"([^"]+)"') { $exe = $Matches[1] } else { $exe = ($path -split '\s+')[0] }
+    $ini = $null
+    if ($path -match '--defaults-file="?([^"]+?\.(ini|cnf))') { $ini = $Matches[1] }
+    $port = 3306
+    $dataDir = '(default)'
+    if ($ini -and (Test-Path $ini)) {
+      $m = Select-String -Path $ini -Pattern '^\s*port\s*=\s*(\d+)' | Select-Object -First 1
+      if ($m) { $port = [int]$m.Matches[0].Groups[1].Value }
+      $m = Select-String -Path $ini -Pattern '^\s*datadir\s*=\s*"?([^"\r\n]+)"?' | Select-Object -First 1
+      if ($m) { $dataDir = $m.Matches[0].Groups[1].Value.Trim() }
+    }
+    # Plain string handling: the service may point at a drive that is not mounted right now.
+    $bin = $exe.Substring(0, [Math]::Max(0, $exe.LastIndexOfAny([char[]]'\/')))
+    $client = @('mariadb.exe', 'mysql.exe') | ForEach-Object { "$bin\$_" } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    $adminTool = @('mariadb-admin.exe', 'mysqladmin.exe') | ForEach-Object { "$bin\$_" } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    $version = ''
+    if (Test-Path -LiteralPath $exe) { $version = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion }
+    if (-not $version) { $version = ($bin -split '[\\/]')[-2] }
+    [pscustomobject]@{ Service = $_.Name; State = $_.State; Version = $version; Port = $port; DataDir = $dataDir
+                       Exe = $exe; Ini = $ini; Client = $client; AdminTool = $adminTool }
+  }
 }
-function Find-DbService { Get-Service | Where-Object { $_.Name -match '^(MariaDB|MySQL)' } | Select-Object -First 1 }
 
 Step 'Checking MariaDB'
-$DbClient = Find-DbClient
-if (-not $DbClient) {
-  Write-Host 'Installing MariaDB with winget (this can take a few minutes)...'
+$instances = @(Get-DbServer)
+if (-not $instances.Count) {
+  Write-Host 'No MariaDB found - installing it with winget (this can take a few minutes)...'
   Invoke-Winget 'MariaDB.Server'
-  $DbClient = Find-DbClient
-  if (-not $DbClient) { Fail 'MariaDB did not install. Install it from https://mariadb.org/download/ (keep "Install as service" ticked), then re-run with -DbRootPassword <the root password you chose>.' }
+  $instances = @(Get-DbServer)
+  if (-not $instances.Count) { Fail 'MariaDB did not install. Install it from https://mariadb.org/download/ (keep "Install as service" ticked), then re-run.' }
 }
-$svc = Find-DbService
-if (-not $svc) { Fail 'MariaDB is installed but its Windows service was not found. Reinstall MariaDB with "Install as service" ticked.' }
-if ($svc.Status -ne 'Running') { Start-Service $svc.Name }
-Set-Service $svc.Name -StartupType Automatic
-Write-Host "MariaDB service '$($svc.Name)' is running ($DbClient)"
+Write-Host 'Database servers found on this PC:'
+$instances | Format-Table Service, State, Version, Port, DataDir -AutoSize | Out-String | Write-Host
+
+$inst = $instances | Where-Object { $_.Port -eq $DbPort } | Select-Object -First 1
+if (-not $inst) {
+  if ($instances.Count -eq 1 -and -not $PSBoundParameters.ContainsKey('DbPort')) { $inst = $instances[0] }
+  else { Fail "No database service uses port $DbPort. Re-run with -DbPort <port> to choose one of the servers listed above." }
+}
+$DbPort = $inst.Port
+if (-not $inst.Client) { Fail "Could not find mariadb.exe or mysql.exe next to $($inst.Exe)." }
+$DbClient = $inst.Client
+if ($inst.State -ne 'Running') { Start-Service $inst.Service }
+Set-Service $inst.Service -StartupType Automatic
+
+# Make sure the program answering on the port really is this service (XAMPP/WAMP often hold 3306 too).
+Start-Sleep -Seconds 2
+$listener = Get-NetTCPConnection -State Listen -LocalPort $DbPort -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($listener) {
+  $owner = (Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue).Path
+  if ($owner -and ($owner -ne $inst.Exe)) {
+    Fail "Port $DbPort is held by $owner, not by the '$($inst.Service)' service ($($inst.Exe)). Stop that program, or re-run with -DbPort <another port> to use another server listed above."
+  }
+}
+Write-Host "Using: service '$($inst.Service)' - MariaDB $($inst.Version) on 127.0.0.1:$DbPort" -ForegroundColor Cyan
+Write-Host "       data folder $($inst.DataDir)"
 
 function Invoke-Sql([string]$Sql, [string]$Password, [string]$Database = '') {
   $env:MYSQL_PWD = $Password
   try {
-    $dbArgs = @('-u', 'root', '-h', '127.0.0.1', '--protocol=TCP', '-N', '-B', '-e', $Sql)
+    $dbArgs = @('-u', 'root', '-h', '127.0.0.1', '-P', "$DbPort", '--protocol=TCP', '-N', '-B', '-e', $Sql)
     if ($Database) { $dbArgs += $Database }
     $out = & $DbClient @dbArgs 2>&1
     if ($LASTEXITCODE -ne 0) { throw ($out | Out-String) }
@@ -130,6 +173,46 @@ function Invoke-Sql([string]$Sql, [string]$Password, [string]$Database = '') {
 }
 function Test-RootPassword([string]$Password) {
   try { Invoke-Sql 'SELECT 1' $Password | Out-Null; return $true } catch { return $false }
+}
+function Set-RootPasswordSql([string]$Password) {
+  "ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY '$Password'; " +
+  "ALTER USER IF EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '$Password'; " +
+  "ALTER USER IF EXISTS 'root'@'::1' IDENTIFIED BY '$Password'; FLUSH PRIVILEGES;"
+}
+
+# Forgotten root password: restart the server briefly without permission checks and set a new one.
+function Reset-RootPassword {
+  Write-Host "`nThis stops the '$($inst.Service)' service for about a minute and gives MariaDB's root account a new password." -ForegroundColor Yellow
+  Write-Host 'Your existing databases and data are not changed. Programs that use the old root password will need the new one.'
+  if ((Read-Host 'Type YES to continue') -ne 'YES') { Fail 'Cancelled.' }
+  Stop-Service $inst.Service -Force
+  $startArgs = @()
+  if ($inst.Ini) { $startArgs += "--defaults-file=`"$($inst.Ini)`"" }
+  $startArgs += @('--skip-grant-tables', "--port=$DbPort", '--bind-address=127.0.0.1')
+  $proc = Start-Process -FilePath $inst.Exe -ArgumentList $startArgs -PassThru -WindowStyle Hidden
+  $up = $false
+  for ($i = 0; $i -lt 30; $i++) { Start-Sleep -Seconds 1; if (Test-RootPassword '') { $up = $true; break } }
+  if (-not $up) {
+    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    Start-Service $inst.Service
+    Fail 'Could not start MariaDB in recovery mode. The service has been restarted unchanged.'
+  }
+  $newPass = New-Secret 24
+  try { Invoke-Sql ('FLUSH PRIVILEGES; ' + (Set-RootPasswordSql $newPass)) '' | Out-Null }
+  finally {
+    # Clean shutdown with the new password, then back to the normal service.
+    if ($inst.AdminTool) {
+      $env:MYSQL_PWD = $newPass
+      & $inst.AdminTool -u root -h 127.0.0.1 -P "$DbPort" --protocol=TCP shutdown 2>&1 | Out-Null
+      Remove-Item Env:\MYSQL_PWD -ErrorAction SilentlyContinue
+    }
+    if (-not $proc.WaitForExit(30000)) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+    Start-Service $inst.Service
+    Start-Sleep -Seconds 3
+  }
+  if (-not (Test-RootPassword $newPass)) { Fail 'The new root password did not take effect. Your MariaDB service has been restarted unchanged.' }
+  Write-Host 'MariaDB root password reset (saved in credentials.txt).' -ForegroundColor Green
+  return $newPass
 }
 
 # Work out the root password: given, saved by an earlier run, blank on a fresh install, or ask.
@@ -140,21 +223,30 @@ if (Test-Path $CredFile) {
   $m = Select-String -Path $CredFile -Pattern '^MariaDB root password:\s*(\S+)' | Select-Object -First 1
   if ($m) { $saved = $m.Matches[0].Groups[1].Value }
 }
-foreach ($candidate in @($DbRootPassword, $saved, '')) {
-  if ($null -ne $candidate -and (Test-RootPassword $candidate)) { $RootPass = $candidate; break }
+if ($ResetRootPassword) {
+  $newRootPass = Reset-RootPassword
+  $RootPass = $newRootPass
+} else {
+  foreach ($candidate in @($DbRootPassword, $saved, '')) {
+    if ($null -ne $candidate -and (Test-RootPassword $candidate)) { $RootPass = $candidate; break }
+  }
 }
 if ($null -eq $RootPass) {
-  $secure = Read-Host 'Enter the MariaDB root password' -AsSecureString
-  $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
-  if (-not (Test-RootPassword $plain)) { Fail 'That MariaDB root password is not correct.' }
-  $RootPass = $plain
+  Write-Host "MariaDB's root password is needed (it was chosen when MariaDB was first installed on this PC)."
+  for ($try = 1; $try -le 3 -and $null -eq $RootPass; $try++) {
+    $secure = Read-Host "Enter the MariaDB root password (attempt $try of 3)" -AsSecureString
+    $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+    if (Test-RootPassword $plain) { $RootPass = $plain } else { Note 'That password is not correct.' }
+  }
+  if ($null -eq $RootPass) {
+    Fail ("The root password was not accepted by the '$($inst.Service)' server on port $DbPort.`n" +
+      "If you have forgotten it, re-run the same command with -ResetRootPassword added.")
+  }
 }
 if ($RootPass -eq '') {
   # Fresh MariaDB with no root password: secure it now.
   $newRootPass = New-Secret 24
-  Invoke-Sql ("ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY '$newRootPass'; " +
-    "ALTER USER IF EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '$newRootPass'; " +
-    "ALTER USER IF EXISTS 'root'@'::1' IDENTIFIED BY '$newRootPass'; FLUSH PRIVILEGES;") '' | Out-Null
+  Invoke-Sql (Set-RootPasswordSql $newRootPass) '' | Out-Null
   $RootPass = $newRootPass
   Write-Host 'MariaDB root password set (saved in credentials.txt).'
 }
@@ -200,7 +292,7 @@ TZ=Asia/Kolkata
 SESSION_DAYS=30
 
 DB_HOST=127.0.0.1
-DB_PORT=3306
+DB_PORT=$DbPort
 DB_NAME=$DbName
 DB_USER=$DbUser
 DB_PASSWORD=$DbPass
@@ -301,7 +393,7 @@ if ($Public) {
   if ($ip) { Write-Host "  On your Wi-Fi : http://${ip}:$Port/   (phones need HTTPS for camera, GPS and install)" }
 }
 Write-Host "  App folder    : $AppDir   (settings in $envFile)"
-Write-Host "  Database      : $DbName on MariaDB, user $DbUser"
+Write-Host "  Database      : $DbName on MariaDB ($($inst.Service), port $DbPort), user $DbUser"
 if ($AdminPass) {
   Write-Host "  Admin login   : ADMIN / $AdminPass" -ForegroundColor Cyan
   Write-Host "                  (also saved in $CredFile - change it after signing in)"
