@@ -1,6 +1,7 @@
 // Device-local persistence plus an outbox of records awaiting sync.
-import { isoDate, localTimestamp, receiptNumber } from './logic.js';
+import { isoDate, localTimestamp, receiptNumber, findDuplicateSlip } from './logic.js';
 import { seedLoans } from './seed.js';
+import { getSlip, blobToBase64, clearSlips } from './slips.js';
 
 const KEY = 'loan-recovery:v1';
 
@@ -71,11 +72,17 @@ function enqueue(type, loanId, record) {
   state.outbox.push({ id: uid('ob'), type, loanId, record, queuedAt: localTimestamp() });
 }
 
-/** Records a collection and returns the stored payment. */
-export function recordPayment(loanId, { amount, mode, reference, location }) {
+/**
+ * Records a collection and returns the stored payment.
+ * `deposit` is set when the borrower paid straight into the bank:
+ * { slipNo, bank, depositDate, slipId, slipType } — the slip image itself is in IndexedDB.
+ */
+export function recordPayment(loanId, { amount, mode, reference, location, deposit }) {
   const loan = getLoan(loanId);
   if (!loan) throw new Error('Loan not found');
+  if (deposit && findDuplicateSlip(state.loans, deposit.slipNo)) throw new Error('This slip is already recorded.');
   const payment = {
+    ...(deposit ? { deposit: { ...deposit, verification: 'pending' } } : {}),
     id: uid('p'),
     at: localTimestamp(),
     amount,
@@ -125,13 +132,23 @@ export async function syncNow() {
   if (!navigator.onLine) throw new Error('You are offline. Records stay queued on this device.');
   const batch = state.outbox.slice();
   if (!batch.length) return 0;
+  // Deposit slips travel with their payment record as base64.
+  const records = await Promise.all(
+    batch.map(async (item) => {
+      const slipId = item.record.deposit?.slipId;
+      if (!slipId) return item;
+      const blob = await getSlip(slipId);
+      if (!blob) throw new Error(`Slip image for receipt ${item.record.receiptNo} is missing on this device.`);
+      return { ...item, slip: { mimeType: blob.type, base64: await blobToBase64(blob) } };
+    })
+  );
   const res = await fetch(syncUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(syncToken ? { Authorization: `Bearer ${syncToken}` } : {}),
     },
-    body: JSON.stringify({ officer: state.officer, sentAt: localTimestamp(), records: batch }),
+    body: JSON.stringify({ officer: state.officer, sentAt: localTimestamp(), records }),
   });
   if (!res.ok) throw new Error(`Server rejected sync (HTTP ${res.status}). Records stay queued.`);
   const sent = new Set(batch.map((b) => b.record.id));
@@ -160,9 +177,11 @@ export function loadDemoData() {
   if (state.outbox.length) throw new Error('Sync or export pending records before reloading data.');
   state.loans = seedLoans();
   save();
+  clearSlips().catch(() => {}); // slips belonged to the replaced loan book
 }
 
-export function resetAll() {
+export async function resetAll() {
   state = blank();
   save();
+  await clearSlips().catch(() => {});
 }

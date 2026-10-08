@@ -11,7 +11,8 @@ export const VISIT_OUTCOMES = [
   { code: 'SHIFTED', label: 'Shifted / not traceable' },
 ];
 
-export const PAYMENT_MODES = ['Cash', 'UPI', 'Cheque', 'Bank transfer'];
+export const BANK_DEPOSIT = 'Bank deposit';
+export const PAYMENT_MODES = ['Cash', 'UPI', 'Cheque', 'Bank transfer', BANK_DEPOSIT];
 
 export const DPD_BUCKETS = [
   { key: 'current', label: 'Current', min: 0, max: 0 },
@@ -158,6 +159,35 @@ export function validatePayment(loan, amount, today = isoDate()) {
   return null;
 }
 
+export const normaliseSlipNo = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+/** Returns the loan and payment already carrying this slip number, if any. */
+export function findDuplicateSlip(loans, slipNo) {
+  const key = normaliseSlipNo(slipNo);
+  if (!key) return null;
+  for (const loan of loans) {
+    const payment = loan.payments.find((p) => p.deposit && normaliseSlipNo(p.deposit.slipNo) === key);
+    if (payment) return { loan, payment };
+  }
+  return null;
+}
+
+/**
+ * Validates the details of a borrower's direct bank deposit.
+ * Returns an error string or null.
+ */
+export function validateDeposit({ slipNo, depositDate, bank, hasSlip }, loans, today = isoDate()) {
+  if (!hasSlip) return 'Attach a photo of the deposit slip.';
+  if (!normaliseSlipNo(slipNo)) return 'Enter the slip / journal number printed on the slip.';
+  if (!String(bank || '').trim()) return 'Enter the bank and branch where it was deposited.';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(depositDate || '')) return 'Enter the deposit date.';
+  if (depositDate > today) return 'Deposit date cannot be in the future.';
+  if (daysBetween(depositDate, today) > 90) return 'Deposit is more than 90 days old — refer it to the branch.';
+  const dup = findDuplicateSlip(loans, slipNo);
+  if (dup) return `Slip ${slipNo} is already recorded on ${dup.loan.loanNo} (${dup.loan.borrower.name}).`;
+  return null;
+}
+
 /** Receipt number: R-<officer>-<yymmdd>-<seq>, unique per device per day. */
 export function receiptNumber(officerCode, dateStr, seq) {
   const ymd = dateStr.replaceAll('-', '').slice(2);
@@ -231,7 +261,8 @@ export function collectionsCSV(loans, day) {
   const { payments, visits } = daySummary(loans, day);
   const rows = [
     ...payments.map((p) => [
-      p.at, 'PAYMENT', p.loan.loanNo, p.loan.borrower.name, p.amount, p.mode, p.receiptNo, p.reference || '', '',
+      p.at, 'PAYMENT', p.loan.loanNo, p.loan.borrower.name, p.amount, p.mode, p.receiptNo, p.reference || '',
+      p.deposit ? `Deposited ${p.deposit.depositDate} at ${p.deposit.bank}; slip ${p.deposit.verification}` : '',
     ]),
     ...visits.map((v) => [
       v.at, 'VISIT', v.loan.loanNo, v.loan.borrower.name, v.ptpAmount || '', '', '',

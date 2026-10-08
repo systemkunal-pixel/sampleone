@@ -34,6 +34,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
@@ -193,6 +194,31 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); out
 fieldset.modes { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 fieldset.modes legend { font-size: .9rem; color: var(--muted); margin-bottom: 4px; }
 fieldset.modes .radio { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.note { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--chip); font-size: .88rem; }
+.slip-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 120px;
+  padding: 10px;
+  border: 2px dashed var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  text-align: center;
+  cursor: pointer;
+}
+.slip-preview img, .slip-view img {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  margin: 0 auto;
+  border-radius: 8px;
+  object-fit: contain;
+}
+.slip-preview span { font-size: .8rem; color: var(--muted); }
+.slip-view { margin: 10px 0; text-align: center; }
 .error { color: var(--bad); margin: 0; min-height: 1em; font-size: .9rem; }
 
 .search input { margin: 4px 0 8px; }

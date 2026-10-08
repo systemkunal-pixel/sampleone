@@ -1,9 +1,10 @@
 import {
-  VISIT_OUTCOMES, PAYMENT_MODES, DPD_BUCKETS,
+  VISIT_OUTCOMES, PAYMENT_MODES, DPD_BUCKETS, BANK_DEPOSIT,
   isoDate, addDays, formatINR, money, loanStatus, allocate, activePromise, visitList,
-  validatePayment, distanceKm, daySummary, portfolioSummary, collectionsCSV, outcomeLabel,
+  validatePayment, validateDeposit, distanceKm, daySummary, portfolioSummary, collectionsCSV, outcomeLabel,
 } from './logic.js';
 import * as store from './store.js';
+import { prepareSlip, putSlip, getSlip, deleteSlip } from './slips.js';
 
 const $app = document.getElementById('app');
 const $nav = document.getElementById('nav');
@@ -28,6 +29,35 @@ function fmtDate(d) {
   if (!d) return '—';
   const [y, m, day] = d.slice(0, 10).split('-').map(Number);
   return new Date(y, m - 1, day).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function verificationTag(deposit) {
+  if (deposit.verification === 'verified') return '<span class="tag tag-ok">Verified</span>';
+  if (deposit.verification === 'rejected') return '<span class="tag tag-bad">Rejected</span>';
+  return '<span class="tag tag-warn">Pending verification</span>';
+}
+
+// Object URLs for slip images, released whenever the view changes.
+let slipUrls = [];
+const trackUrl = (url) => (slipUrls.push(url), url);
+function revokeSlipUrls() {
+  slipUrls.forEach((u) => URL.revokeObjectURL(u));
+  slipUrls = [];
+}
+
+/** Fills [data-slip] placeholders with the stored slip image or PDF link. */
+async function hydrateSlips() {
+  for (const el of document.querySelectorAll('[data-slip]')) {
+    const blob = await getSlip(el.dataset.slip).catch(() => null);
+    if (!blob) {
+      el.innerHTML = '<span class="muted small">Slip image not available on this device.</span>';
+      continue;
+    }
+    const url = trackUrl(URL.createObjectURL(blob));
+    el.innerHTML = blob.type === 'application/pdf'
+      ? `<a class="btn" href="${url}" target="_blank" rel="noopener">📄 Open deposit slip (PDF)</a>`
+      : `<a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="Bank deposit slip"></a>`;
+  }
 }
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -182,7 +212,13 @@ function viewLoan(id) {
   const ptp = activePromise(loan);
   const mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${b.lat},${b.lng}`;
   const history = [
-    ...loan.payments.map((p) => ({ at: p.at, html: `<strong class="ok">${formatINR(p.amount)}</strong> collected · ${esc(p.mode)} · <a href="#/receipt/${esc(loan.id)}/${esc(p.id)}">${esc(p.receiptNo)}</a>`, synced: p.synced })),
+    ...loan.payments.map((p) => ({
+      at: p.at,
+      html: p.deposit
+        ? `<strong class="ok">${formatINR(p.amount)}</strong> bank deposit · slip ${esc(p.deposit.slipNo)} · <a href="#/receipt/${esc(loan.id)}/${esc(p.id)}">${esc(p.receiptNo)}</a> ${verificationTag(p.deposit)}`
+        : `<strong class="ok">${formatINR(p.amount)}</strong> collected · ${esc(p.mode)} · <a href="#/receipt/${esc(loan.id)}/${esc(p.id)}">${esc(p.receiptNo)}</a>`,
+      synced: p.synced,
+    })),
     ...loan.visits.map((v) => ({
       at: v.at,
       html: `Visit: <strong>${esc(outcomeLabel(v.outcome))}</strong>${v.outcome === 'PTP' ? ` · ${formatINR(v.ptpAmount)} by ${esc(fmtDate(v.ptpDate))}` : ''}${v.notes ? `<div class="muted small">${esc(v.notes)}</div>` : ''}`,
@@ -251,6 +287,16 @@ function viewPay(id) {
         ${PAYMENT_MODES.map((m, i) => `<label class="radio"><input type="radio" name="mode" value="${esc(m)}" ${i === 0 ? 'checked' : ''}> ${esc(m)}</label>`).join('')}
       </fieldset>
       <label id="ref-wrap" hidden>Reference / UTR / Cheque no.<input name="reference" autocomplete="off"></label>
+      <div id="deposit-fields" class="form" hidden>
+        <p class="note">Borrower paid directly at the bank. Photograph the counterfoil / pay-in slip and enter the details exactly as printed.</p>
+        <label class="slip-pick">
+          <span id="slip-preview" class="slip-preview">📷 Take photo or choose file</span>
+          <input name="slip" type="file" accept="image/*,application/pdf" capture="environment" hidden>
+        </label>
+        <label>Slip / journal no.<input name="slipNo" autocomplete="off" autocapitalize="characters"></label>
+        <label>Bank &amp; branch<input name="bank" autocomplete="off" placeholder="e.g. SBI, Chinhat"></label>
+        <label>Deposit date<input name="depositDate" type="date" max="${isoDate()}" min="${addDays(isoDate(), -90)}" value="${isoDate()}"></label>
+      </div>
       <p class="error" id="pay-error" role="alert"></p>
       <button class="btn primary big" type="submit">Confirm &amp; issue receipt</button>
     </form>`;
@@ -288,20 +334,28 @@ function viewReceipt(loanId, paymentId) {
   if (!p) return viewNotFound();
   const { officer } = store.getState();
   const st = loanStatus(loan, isoDate());
+  const d = p.deposit;
   return `
-    ${header('Receipt', `#/loan/${loan.id}`)}
+    ${header(d ? 'Acknowledgement' : 'Receipt', `#/loan/${loan.id}`)}
     <section class="card receipt" id="receipt">
-      <div class="center"><strong>PAYMENT RECEIPT</strong><div class="muted small">${esc(officer.branch)} branch</div></div>
+      <div class="center"><strong>${d ? 'BANK DEPOSIT ACKNOWLEDGEMENT' : 'PAYMENT RECEIPT'}</strong><div class="muted small">${esc(officer.branch)} branch</div></div>
       <dl>
-        <dt>Receipt no.</dt><dd>${esc(p.receiptNo)}</dd>
-        <dt>Date &amp; time</dt><dd>${esc(fmtDate(p.at))} ${esc(fmtTime(p.at))}</dd>
+        <dt>${d ? 'Ack.' : 'Receipt'} no.</dt><dd>${esc(p.receiptNo)}</dd>
+        <dt>${d ? 'Recorded' : 'Date &amp; time'}</dt><dd>${esc(fmtDate(p.at))} ${esc(fmtTime(p.at))}</dd>
         <dt>Borrower</dt><dd>${esc(loan.borrower.name)}</dd>
         <dt>Loan no.</dt><dd>${esc(loan.loanNo)}</dd>
         <dt>Amount</dt><dd class="amount">${formatINR(p.amount)}</dd>
-        <dt>Mode</dt><dd>${esc(p.mode)}${p.reference ? ` (${esc(p.reference)})` : ''}</dd>
+        ${d ? `
+        <dt>Deposited at</dt><dd>${esc(d.bank)}</dd>
+        <dt>Deposit date</dt><dd>${esc(fmtDate(d.depositDate))}</dd>
+        <dt>Slip no.</dt><dd>${esc(d.slipNo)}</dd>
+        <dt>Status</dt><dd>${verificationTag(d)}</dd>` : `
+        <dt>Mode</dt><dd>${esc(p.mode)}${p.reference ? ` (${esc(p.reference)})` : ''}</dd>`}
         <dt>Balance outstanding</dt><dd>${formatINR(st.outstanding)}</dd>
-        <dt>Collected by</dt><dd>${esc(officer.name)} (${esc(officer.code)})</dd>
+        <dt>${d ? 'Recorded by' : 'Collected by'}</dt><dd>${esc(officer.name)} (${esc(officer.code)})</dd>
       </dl>
+      ${d ? `<p class="muted small center">Credit is subject to verification of the deposit with the bank.</p>
+        <div class="slip-view" data-slip="${esc(d.slipId)}"><span class="muted small">Loading slip…</span></div>` : ''}
       ${p.location ? `<div class="muted small center">GPS ${p.location.lat.toFixed(5)}, ${p.location.lng.toFixed(5)}</div>` : ''}
     </section>
     <div class="actions">
@@ -404,7 +458,9 @@ function route() {
   else if (parts[0] === 'loan') html = viewLoan(parts[1]);
   else if (parts[0] === 'receipt') html = viewReceipt(parts[1], parts[2]);
   else html = viewNotFound();
+  revokeSlipUrls();
   $app.innerHTML = html;
+  hydrateSlips();
   $nav.querySelectorAll('a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
   window.scrollTo(0, 0);
 }
@@ -428,21 +484,52 @@ document.addEventListener('submit', async (e) => {
   if (form.id === 'pay-form') {
     const loan = store.getLoan(form.dataset.loan);
     const amount = money(Number(data.amount));
-    const err = validatePayment(loan, Number(data.amount));
-    const needsRef = data.mode !== 'Cash' && !String(data.reference || '').trim();
+    const isDeposit = data.mode === BANK_DEPOSIT;
+    const file = form.slip.files[0];
+    const slipNo = String(data.slipNo || '').trim();
+    const bank = String(data.bank || '').trim();
     const $err = form.querySelector('#pay-error');
-    if (err || needsRef) {
-      $err.textContent = err || `Enter the ${data.mode} reference number.`;
+    const needsRef = !isDeposit && data.mode !== 'Cash' && !String(data.reference || '').trim();
+    const err =
+      validatePayment(loan, Number(data.amount)) ||
+      (isDeposit && validateDeposit({ slipNo, bank, depositDate: data.depositDate, hasSlip: !!file }, store.getState().loans)) ||
+      (needsRef && `Enter the ${data.mode} reference number.`);
+    if (err) {
+      $err.textContent = err;
       return;
     }
-    if (!confirm(`Confirm collection of ${formatINR(amount)} by ${data.mode} from ${loan.borrower.name}?`)) return;
+    const prompt = isDeposit
+      ? `Record bank deposit of ${formatINR(amount)} by ${loan.borrower.name} (slip ${slipNo})? It will be marked pending verification.`
+      : `Confirm collection of ${formatINR(amount)} by ${data.mode} from ${loan.borrower.name}?`;
+    if (!confirm(prompt)) return;
     const btn = form.querySelector('[type=submit]');
     btn.disabled = true;
-    btn.textContent = 'Capturing location…';
-    const loc = await getPosition(5000);
-    const p = store.recordPayment(loan.id, { amount, mode: data.mode, reference: data.reference?.trim(), location: loc });
-    toast(`Receipt ${p.receiptNo} issued`);
-    location.hash = `#/receipt/${loan.id}/${p.id}`;
+    let deposit = null;
+    try {
+      if (isDeposit) {
+        btn.textContent = 'Saving slip…';
+        const blob = await prepareSlip(file);
+        const slipId = store.uid('slip');
+        await putSlip(slipId, blob);
+        deposit = { slipId, slipType: blob.type, slipNo, bank, depositDate: data.depositDate };
+      }
+      btn.textContent = 'Capturing location…';
+      const loc = await getPosition(5000);
+      const p = store.recordPayment(loan.id, {
+        amount,
+        mode: data.mode,
+        reference: isDeposit ? slipNo : data.reference?.trim(),
+        location: loc,
+        deposit,
+      });
+      toast(`${isDeposit ? 'Acknowledgement' : 'Receipt'} ${p.receiptNo} issued`);
+      location.hash = `#/receipt/${loan.id}/${p.id}`;
+    } catch (e2) {
+      if (deposit) deleteSlip(deposit.slipId).catch(() => {});
+      $err.textContent = e2.message || 'Could not save the payment.';
+      btn.disabled = false;
+      btn.textContent = 'Confirm & issue receipt';
+    }
   }
 
   if (form.id === 'visit-form') {
@@ -512,7 +599,9 @@ document.addEventListener('click', async (e) => {
       const loan = store.getLoan(el.dataset.loan);
       const p = loan.payments.find((x) => x.id === el.dataset.payment);
       const st = loanStatus(loan, isoDate());
-      const text = `Receipt ${p.receiptNo}: Received ${formatINR(p.amount)} (${p.mode}) towards loan ${loan.loanNo} on ${fmtDate(p.at)} ${fmtTime(p.at)}. Balance outstanding ${formatINR(st.outstanding)}. Thank you.`;
+      const text = p.deposit
+        ? `Ack ${p.receiptNo}: Your bank deposit of ${formatINR(p.amount)} (slip ${p.deposit.slipNo}, ${p.deposit.bank}, ${fmtDate(p.deposit.depositDate)}) towards loan ${loan.loanNo} has been recorded and is pending verification. Balance outstanding ${formatINR(st.outstanding)}.`
+        : `Receipt ${p.receiptNo}: Received ${formatINR(p.amount)} (${p.mode}) towards loan ${loan.loanNo} on ${fmtDate(p.at)} ${fmtTime(p.at)}. Balance outstanding ${formatINR(st.outstanding)}. Thank you.`;
       if (navigator.share) {
         navigator.share({ title: 'Payment receipt', text }).catch(() => {});
       } else {
@@ -555,7 +644,7 @@ document.addEventListener('click', async (e) => {
         ? `${pending} records are NOT synced and will be lost. Erase everything anyway?`
         : 'Erase all data on this device?';
       if (confirm(msg)) {
-        store.resetAll();
+        await store.resetAll();
         location.hash = '#/';
         route();
       }
@@ -577,8 +666,20 @@ document.addEventListener('input', (e) => {
 
 document.addEventListener('change', async (e) => {
   const t = e.target;
+  if (t.form?.id === 'pay-form') document.getElementById('pay-error').textContent = '';
   if (t.name === 'mode' && t.form?.id === 'pay-form') {
-    document.getElementById('ref-wrap').hidden = t.value === 'Cash';
+    document.getElementById('ref-wrap').hidden = t.value === 'Cash' || t.value === BANK_DEPOSIT;
+    document.getElementById('deposit-fields').hidden = t.value !== BANK_DEPOSIT;
+    t.form.querySelector('[type=submit]').textContent =
+      t.value === BANK_DEPOSIT ? 'Save deposit & issue acknowledgement' : 'Confirm & issue receipt';
+  }
+  if (t.name === 'slip' && t.form?.id === 'pay-form') {
+    const file = t.files[0];
+    const box = document.getElementById('slip-preview');
+    revokeSlipUrls();
+    if (!file) box.textContent = '📷 Take photo or choose file';
+    else if (file.type.startsWith('image/')) box.innerHTML = `<img src="${trackUrl(URL.createObjectURL(file))}" alt="Deposit slip preview"><span>Tap to retake</span>`;
+    else box.textContent = `📄 ${file.name} — tap to change`;
   }
   if (t.name === 'outcome' && t.form?.id === 'visit-form') {
     const show = t.value === 'PTP';

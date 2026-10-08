@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   addMonths, daysBetween, loanStatus, allocate, activePromise, priorityScore, visitList,
   validatePayment, receiptNumber, distanceKm, daySummary, portfolioSummary, toCSV, bucketFor,
+  validateDeposit, findDuplicateSlip, collectionsCSV,
 } from '../src/js/logic.js';
 import { seedLoans } from '../src/js/seed.js';
 
@@ -142,4 +143,27 @@ test('seed portfolio has a realistic mix', () => {
   const keys = new Set(loans.map((l) => loanStatus(l, TODAY).bucket.key));
   for (const k of ['current', '1-30', '61-90', '90+']) assert.ok(keys.has(k), `missing bucket ${k}`);
   assert.ok(visitList(loans, TODAY).length >= 8);
+});
+
+test('bank deposit validation', () => {
+  const ok = { slipNo: 'JRN 4471', bank: 'SBI Chinhat', depositDate: '2026-10-07', hasSlip: true };
+  assert.equal(validateDeposit(ok, [], TODAY), null);
+  assert.match(validateDeposit({ ...ok, hasSlip: false }, [], TODAY), /photo/);
+  assert.match(validateDeposit({ ...ok, slipNo: ' - ' }, [], TODAY), /slip \/ journal/);
+  assert.match(validateDeposit({ ...ok, bank: '' }, [], TODAY), /bank/);
+  assert.match(validateDeposit({ ...ok, depositDate: '' }, [], TODAY), /deposit date/);
+  assert.match(validateDeposit({ ...ok, depositDate: '2026-10-09' }, [], TODAY), /future/);
+  assert.match(validateDeposit({ ...ok, depositDate: '2026-06-01' }, [], TODAY), /90 days/);
+});
+
+test('the same slip cannot be recorded twice, even typed differently', () => {
+  const deposit = { slipNo: 'JRN-4471', bank: 'SBI', depositDate: '2026-10-07', verification: 'pending' };
+  const loan = makeLoan({ payments: [{ ...pay(1000, `${TODAY}T10:00:00`), mode: 'Bank deposit', deposit }] });
+  assert.equal(findDuplicateSlip([loan], 'jrn 4471').loan, loan);
+  assert.equal(findDuplicateSlip([loan], 'JRN4472'), null);
+  const err = validateDeposit({ slipNo: 'jrn4471', bank: 'SBI', depositDate: '2026-10-07', hasSlip: true }, [loan], TODAY);
+  assert.match(err, /already recorded on MFL\/1/);
+  // Deposits count toward the borrower's dues and appear in the day's export.
+  assert.equal(loanStatus(loan, TODAY).overdue, 3000);
+  assert.match(collectionsCSV([loan], TODAY), /Deposited 2026-10-07 at SBI; slip pending/);
 });

@@ -1,5 +1,5 @@
 // App-shell service worker: cache-first for local assets so the app opens with no network.
-const CACHE = 'loan-recovery-v1';
+const CACHE = 'loan-recovery-v2';
 const SHELL = [
   './',
   './index.html',
@@ -10,6 +10,7 @@ const SHELL = [
   './js/logic.js',
   './js/store.js',
   './js/seed.js',
+  './js/slips.js',
 ];
 
 self.addEventListener('install', (e) => {
