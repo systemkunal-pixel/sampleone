@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   addMonths, daysBetween, loanStatus, allocate, activePromise, priorityScore, visitList,
   validatePayment, receiptNumber, distanceKm, daySummary, portfolioSummary, toCSV, bucketFor,
-  validateDeposit, findDuplicateSlip, collectionsCSV,
+  validateDeposit, findDuplicateSlip, collectionsCSV, lastReceiptSeq,
 } from '../src/js/logic.js';
 import { seedLoans } from '../src/js/seed.js';
 
@@ -166,4 +166,21 @@ test('the same slip cannot be recorded twice, even typed differently', () => {
   // Deposits count toward the borrower's dues and appear in the day's export.
   assert.equal(loanStatus(loan, TODAY).overdue, 3000);
   assert.match(collectionsCSV([loan], TODAY), /Deposited 2026-10-07 at SBI; slip pending/);
+});
+
+test('a rejected deposit stops counting toward dues and frees its slip number', () => {
+  const deposit = (verification) => ({ slipNo: 'JRN1', bank: 'SBI', depositDate: '2026-10-07', verification });
+  const make = (v) => makeLoan({ payments: [{ ...pay(1000, `${TODAY}T10:00:00`), mode: 'Bank deposit', deposit: deposit(v) }] });
+  assert.equal(loanStatus(make('pending'), TODAY).overdue, 3000);
+  assert.equal(loanStatus(make('verified'), TODAY).overdue, 3000);
+  assert.equal(loanStatus(make('rejected'), TODAY).overdue, 4000);
+  assert.equal(daySummary([make('rejected')], TODAY).collected, 0);
+  assert.equal(findDuplicateSlip([make('rejected')], 'JRN1'), null);
+  assert.ok(findDuplicateSlip([make('verified')], 'JRN1'));
+});
+
+test('receipt numbering continues from the server', () => {
+  const nos = ['R-FO27-261008-004', 'R-FO27-261008-011', 'R-FO31-261008-020', 'R-FO27-261007-030', 'R-HIST-1'];
+  assert.equal(lastReceiptSeq(nos, 'FO27', '2026-10-08'), 11);
+  assert.equal(lastReceiptSeq([], 'FO27', '2026-10-08'), 0);
 });

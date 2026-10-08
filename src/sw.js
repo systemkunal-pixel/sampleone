@@ -1,5 +1,5 @@
 // App-shell service worker: cache-first for local assets so the app opens with no network.
-const CACHE = 'loan-recovery-v3';
+const CACHE = 'loan-recovery-v4';
 const SHELL = [
   './',
   './index.html',
@@ -11,10 +11,12 @@ const SHELL = [
   './icons/maskable-512.png',
   './icons/apple-touch-icon.png',
   './js/install.js',
+  './js/api.js',
+  './js/ui.js',
+  './js/supervisor.js',
   './js/app.js',
   './js/logic.js',
   './js/store.js',
-  './js/seed.js',
   './js/slips.js',
 ];
 
@@ -32,8 +34,8 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  // Only handle same-origin GETs; sync POSTs and map links go straight to the network.
-  if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  // Only the app shell is cached. API calls (live data, slips) and other origins go straight to the network.
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.includes('/api/')) return;
   // Stale-while-revalidate: serve the cached copy instantly, refresh it in the background.
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then((hit) => {

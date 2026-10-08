@@ -29,7 +29,7 @@ export const getSlip = (id) => tx('readonly', (s) => s.get(id));
 export const deleteSlip = (id) => tx('readwrite', (s) => s.delete(id));
 export const clearSlips = () => tx('readwrite', (s) => s.clear());
 
-/** Downscales a photo to JPEG; PDFs and small images are kept as-is. */
+/** Downscales a photo to JPEG; PDFs and small JPEG/PNG/WebP images are kept as-is. */
 export async function prepareSlip(file) {
   if (!file) throw new Error('Attach a photo of the deposit slip.');
   const isImage = file.type.startsWith('image/');
@@ -45,7 +45,9 @@ export async function prepareSlip(file) {
     throw new Error('Could not read that image. Try taking the photo again.');
   }
   const scale = Math.min(1, MAX_EDGE / Math.max(bmp.width, bmp.height));
-  if (scale === 1 && file.size < 400 * 1024) return file;
+  // The server accepts JPEG/PNG/WebP; anything else (e.g. HEIC) is re-encoded as JPEG.
+  const webSafe = ['image/jpeg', 'image/png', 'image/webp'].includes(file.type);
+  if (scale === 1 && webSafe && file.size < 400 * 1024) return file;
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(bmp.width * scale);
   canvas.height = Math.round(bmp.height * scale);

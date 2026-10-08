@@ -66,8 +66,11 @@ export function formatINR(n) {
   return '₹' + Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 }
 
+/** A bank deposit the supervisor rejected never reached the lender, so it doesn't reduce dues. */
+export const countsTowardDues = (p) => p.deposit?.verification !== 'rejected';
+
 export function totalPaid(loan) {
-  return money(loan.payments.reduce((s, p) => s + p.amount, 0));
+  return money(loan.payments.filter(countsTowardDues).reduce((s, p) => s + p.amount, 0));
 }
 
 /**
@@ -117,7 +120,7 @@ export function activePromise(loan) {
   const latest = ptps.reduce((a, b) => (a.at > b.at ? a : b));
   // A payment made on or after the promise was recorded keeps the promise.
   const paidSince = money(
-    loan.payments.filter((p) => p.at >= latest.at).reduce((s, p) => s + p.amount, 0)
+    loan.payments.filter((p) => p.at >= latest.at && countsTowardDues(p)).reduce((s, p) => s + p.amount, 0)
   );
   const kept = paidSince >= (latest.ptpAmount || 0) && paidSince > 0;
   return { ...latest, kept };
@@ -166,7 +169,10 @@ export function findDuplicateSlip(loans, slipNo) {
   const key = normaliseSlipNo(slipNo);
   if (!key) return null;
   for (const loan of loans) {
-    const payment = loan.payments.find((p) => p.deposit && normaliseSlipNo(p.deposit.slipNo) === key);
+    // A rejected slip may be re-entered (e.g. after correcting the amount).
+    const payment = loan.payments.find(
+      (p) => p.deposit && countsTowardDues(p) && normaliseSlipNo(p.deposit.slipNo) === key
+    );
     if (payment) return { loan, payment };
   }
   return null;
@@ -195,6 +201,16 @@ export function receiptNumber(officerCode, dateStr, seq) {
   return `R-${code}-${ymd}-${String(seq).padStart(3, '0')}`;
 }
 
+/** Highest receipt sequence already used by an officer on a day, so a new device or reinstall continues it. */
+export function lastReceiptSeq(receiptNos, officerCode, dateStr) {
+  const prefix = receiptNumber(officerCode, dateStr, 0).slice(0, -3);
+  let max = 0;
+  for (const r of receiptNos) {
+    if (r?.startsWith(prefix)) max = Math.max(max, Number(r.slice(prefix.length)) || 0);
+  }
+  return max;
+}
+
 /** Great-circle distance in km between two {lat, lng} points. */
 export function distanceKm(a, b) {
   if (!a || !b || a.lat == null || b.lat == null) return null;
@@ -212,7 +228,7 @@ export function daySummary(loans, day = isoDate()) {
   const payments = [];
   const visits = [];
   for (const loan of loans) {
-    for (const p of loan.payments) if (p.at.slice(0, 10) === day) payments.push({ ...p, loan });
+    for (const p of loan.payments) if (p.at.slice(0, 10) === day && countsTowardDues(p)) payments.push({ ...p, loan });
     for (const v of loan.visits) if (v.at.slice(0, 10) === day) visits.push({ ...v, loan });
   }
   const byMode = {};
