@@ -181,18 +181,39 @@ if ($listener) {
 Write-Host "Using: service '$($inst.Service)' - MariaDB $($inst.Version) on 127.0.0.1:$DbPort" -ForegroundColor Cyan
 Write-Host "       data folder $($inst.DataDir)"
 
-function Invoke-Sql([string]$Sql, [string]$Password, [string]$Database = '') {
-  $env:MYSQL_PWD = $Password
-  try {
-    $dbArgs = @('-u', 'root', '-h', '127.0.0.1', '-P', "$DbPort", '--protocol=TCP', '-N', '-B', '-e', $Sql)
-    if ($Database) { $dbArgs += $Database }
-    $out = & $DbClient @dbArgs 2>&1
-    if ($LASTEXITCODE -ne 0) { throw ($out | Out-String) }
-    return ($out | Out-String).Trim()
-  } finally { Remove-Item Env:\MYSQL_PWD -ErrorAction SilentlyContinue }
+# The password goes to the MariaDB client in a temporary option file: newer clients ignore the old
+# MYSQL_PWD variable, and the command line would show it to other programs.
+$DbHost = 'localhost'
+$script:LastDbError = ''
+function New-ClientConfig([string]$Password, [string]$HostName) {
+  $file = Join-Path $env:TEMP ("lr-db-" + [Guid]::NewGuid().ToString('N') + '.cnf')
+  if ($Password.Contains('"')) { $quoted = "'" + $Password + "'" } else { $quoted = '"' + $Password.Replace('\', '\\') + '"' }
+  Write-TextFile $file ("[client]`r`nuser=root`r`npassword=$quoted`r`nhost=$HostName`r`nport=$DbPort`r`nprotocol=TCP`r`n")
+  return $file
 }
+function Invoke-DbTool([string]$Exe, [string]$Password, [string]$HostName, [string[]]$ToolArgs) {
+  $cnf = New-ClientConfig $Password $HostName
+  try {
+    $out = & $Exe "--defaults-extra-file=$cnf" @ToolArgs 2>&1
+    if ($LASTEXITCODE -ne 0) { throw (($out | Out-String).Trim()) }
+    return ($out | Out-String).Trim()
+  } finally { Remove-Item -LiteralPath $cnf -Force -ErrorAction SilentlyContinue }
+}
+function Invoke-Sql([string]$Sql, [string]$Password, [string]$Database = '') {
+  $toolArgs = @('-N', '-B', '-e', $Sql)
+  if ($Database) { $toolArgs += $Database }
+  Invoke-DbTool $DbClient $Password $DbHost $toolArgs
+}
+# Tries 'localhost' and '127.0.0.1' (root is often allowed from only one of them) and remembers which worked.
 function Test-RootPassword([string]$Password) {
-  try { Invoke-Sql 'SELECT 1' $Password | Out-Null; return $true } catch { return $false }
+  foreach ($h in @('localhost', '127.0.0.1')) {
+    try {
+      Invoke-DbTool $DbClient $Password $h @('-N', '-B', '-e', 'SELECT 1') | Out-Null
+      $script:DbHost = $h
+      return $true
+    } catch { $script:LastDbError = "$_" }
+  }
+  return $false
 }
 function Set-RootPasswordSql([string]$Password) {
   "ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY '$Password'; " +
@@ -222,9 +243,7 @@ function Reset-RootPassword {
   finally {
     # Clean shutdown with the new password, then back to the normal service.
     if ($inst.AdminTool) {
-      $env:MYSQL_PWD = $newPass
-      & $inst.AdminTool -u root -h 127.0.0.1 -P "$DbPort" --protocol=TCP shutdown 2>&1 | Out-Null
-      Remove-Item Env:\MYSQL_PWD -ErrorAction SilentlyContinue
+      try { Invoke-DbTool $inst.AdminTool $newPass $DbHost @('shutdown') | Out-Null } catch { Write-Verbose "shutdown: $_" }
     }
     if (-not $proc.WaitForExit(30000)) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
     Start-Service $inst.Service
@@ -256,10 +275,12 @@ if ($null -eq $RootPass) {
   for ($try = 1; $try -le 3 -and $null -eq $RootPass; $try++) {
     $secure = Read-Host "Enter the MariaDB root password (attempt $try of 3)" -AsSecureString
     $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
-    if (Test-RootPassword $plain) { $RootPass = $plain } else { Note 'That password is not correct.' }
+    if (Test-RootPassword $plain) { $RootPass = $plain }
+    else { Note "Not accepted. MariaDB said: $($script:LastDbError)" }
   }
   if ($null -eq $RootPass) {
     Fail ("The root password was not accepted by the '$($inst.Service)' server on port $DbPort.`n" +
+      "Last message from MariaDB: $($script:LastDbError)`n" +
       "If you have forgotten it, re-run the same command with -ResetRootPassword added.")
   }
 }
@@ -267,7 +288,7 @@ $live = Invoke-Sql 'SELECT VERSION()' $RootPass
 if ($live -notmatch 'MariaDB' -or $live -notmatch '^(\d+)\.(\d+)' -or -not (([int]$Matches[1] -gt 10) -or ([int]$Matches[1] -eq 10 -and [int]$Matches[2] -ge 6))) {
   Fail "The server on port $DbPort reports version '$live'. This app needs MariaDB 10.6 or newer."
 }
-Write-Host "Connected to MariaDB $live on port $DbPort."
+Write-Host "Connected to MariaDB $live as root@$DbHost on port $DbPort."
 if ($RootPass -eq '') {
   # Fresh MariaDB with no root password: secure it now.
   $newRootPass = New-Secret 24
@@ -301,7 +322,7 @@ if (-not $DbPass) { $DbPass = New-Secret 28 }
 
 Step "Creating database '$DbName' and user '$DbUser'"
 $grant = ''
-foreach ($h in @('localhost', '127.0.0.1')) {
+foreach ($h in @('localhost', '127.0.0.1', '::1')) {
   $grant += "CREATE USER IF NOT EXISTS '$DbUser'@'$h' IDENTIFIED BY '$DbPass'; ALTER USER '$DbUser'@'$h' IDENTIFIED BY '$DbPass'; " +
     "GRANT ALL PRIVILEGES ON $DbName.* TO '$DbUser'@'$h'; "
 }
@@ -316,7 +337,7 @@ HOST=$listenHost
 TZ=Asia/Kolkata
 SESSION_DAYS=30
 
-DB_HOST=127.0.0.1
+DB_HOST=$DbHost
 DB_PORT=$DbPort
 DB_NAME=$DbName
 DB_USER=$DbUser
