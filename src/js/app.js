@@ -5,6 +5,7 @@ import {
 } from './logic.js';
 import * as store from './store.js';
 import { prepareSlip, putSlip, getSlip, deleteSlip } from './slips.js';
+import * as install from './install.js';
 
 const $app = document.getElementById('app');
 const $nav = document.getElementById('nav');
@@ -162,6 +163,7 @@ function viewToday() {
 
   return `
     ${header(`Hi, ${officer.name.split(' ')[0]}`)}
+    ${installBanner()}
     <section class="stats">
       <div class="stat"><span>Collected today</span><strong>${formatINR(day.collected)}</strong></div>
       <div class="stat"><span>Visits</span><strong>${day.visits.length}</strong></div>
@@ -398,6 +400,41 @@ function viewSummary() {
     </section>`;
 }
 
+const IOS_STEPS = 'In Safari, tap the Share button <b>⬆</b>, then <b>Add to Home Screen</b>.';
+
+function installCard() {
+  switch (install.installState()) {
+    case 'installed':
+      return '<p class="small">✅ Installed on this phone.</p>';
+    case 'prompt':
+      return '<button class="btn primary" data-action="install">📲 Install app on this phone</button>';
+    case 'ios':
+      return `<p class="small">To install: ${IOS_STEPS}</p>`;
+    default:
+      return '<p class="muted small">To install, open the browser menu (⋮) and choose <b>Install app</b> or <b>Add to Home screen</b>.</p>';
+  }
+}
+
+function installBanner() {
+  const state = install.installState();
+  if (install.bannerDismissed() || (state !== 'prompt' && state !== 'ios')) return '';
+  return `<div class="banner">
+    <span>📲 ${state === 'prompt' ? 'Install this app for one-tap access and full offline use.' : `Install this app: ${IOS_STEPS}`}</span>
+    <span class="banner-actions">
+      ${state === 'prompt' ? '<button class="btn small primary" data-action="install">Install</button>' : ''}
+      <button class="btn small" data-action="dismiss-install" aria-label="Dismiss">✕</button>
+    </span>
+  </div>`;
+}
+
+async function hydrateStorage() {
+  const el = document.querySelector('[data-storage]');
+  if (!el) return;
+  const { persisted, usage, quota } = await install.storageInfo();
+  const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
+  el.innerHTML = `${persisted ? '🔒 Storage protected — the phone will not auto-clear app data.' : '⚠️ Storage not yet protected. Installing the app usually fixes this.'}${quota ? `<br>Using ${mb(usage)} of ${mb(quota)} available.` : ''}`;
+}
+
 function viewSettings() {
   const { officer, settings, outbox, lastSyncAt } = store.getState();
   return `
@@ -420,6 +457,11 @@ function viewSettings() {
         <label>Branch<input name="branch" required value="${esc(officer.branch)}"></label>
         <button class="btn" type="submit">Save profile</button>
       </form>
+    </section>
+    <section class="card">
+      <h2>App</h2>
+      ${installCard()}
+      <p class="muted small mt-s" data-storage>Checking storage…</p>
     </section>
     <section class="card">
       <h2>Data</h2>
@@ -461,6 +503,7 @@ function route() {
   revokeSlipUrls();
   $app.innerHTML = html;
   hydrateSlips();
+  hydrateStorage();
   $nav.querySelectorAll('a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
   window.scrollTo(0, 0);
 }
@@ -638,6 +681,14 @@ document.addEventListener('click', async (e) => {
         toast(err.message, 'bad');
       }
       break;
+    case 'install':
+      if (await install.promptInstall()) toast('Installing…');
+      route();
+      break;
+    case 'dismiss-install':
+      install.dismissBanner();
+      route();
+      break;
     case 'reset': {
       const pending = store.getState().outbox.length;
       const msg = pending
@@ -711,5 +762,11 @@ window.addEventListener('offline', route);
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
+
+install.onInstallChange(() => {
+  const h = location.hash;
+  if (h === '' || h === '#/' || h === '#/settings') route();
+});
+install.protectStorage().catch(() => {});
 
 route();

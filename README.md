@@ -30,7 +30,16 @@ npm test         # unit tests for the recovery logic (Node 20.11+)
 
 On first launch, enter the officer name, code and branch. Tick **Load demo portfolio** to get 12 sample accounts across all DPD buckets.
 
-To install on a phone, serve the `src/` folder over HTTPS (any static host works) and use **Add to Home screen**. Service workers and geolocation need HTTPS, except on `localhost`.
+## Installing on a phone
+
+Host the app over HTTPS. The camera, GPS, offline mode and installing all need HTTPS, except on `localhost`. Then open the link once on each phone:
+
+- **Android (Chrome):** the app shows an **Install** banner on the Today screen and an **Install app** button in Settings. It installs with its own icon and opens full-screen.
+- **iPhone (Safari):** tap Share → **Add to Home Screen**. The app shows these steps itself.
+
+On start-up the app asks the browser to protect its storage, so unsynced records aren't cleared when the phone runs low on space. Settings shows whether storage is protected and how much space is used. Installed apps are normally protected automatically.
+
+For Play Store or MDM distribution, wrap the hosted app as a Trusted Web Activity with [Bubblewrap](https://github.com/GoogleChromeLabs/bubblewrap) or [PWABuilder](https://www.pwabuilder.com/).
 
 ## Sync API contract
 
