@@ -25,6 +25,25 @@ At the end it prints the admin password, which is also saved in `/root/loan-reco
 - **Updating:** `git -C ~/sampleone pull && sudo bash ~/sampleone/scripts/install.sh`. The database, data and passwords are kept.
 - **Other options:** `--port`, `--app-dir`, `--db-name`, and `--public` (listen on your network without HTTPS, for testing only). Run with `--help` to see them all.
 
+## Quick install (Windows 10 / 11)
+
+`scripts/install.ps1` uses winget to install Node.js LTS and MariaDB, if they're missing. It then secures MariaDB's root account with a generated password, creates the database and its user, and copies the app to `C:\LoanRecovery`. It also creates the admin and starts the server in the background at every Windows start-up, as a scheduled task that restarts automatically.
+
+In **PowerShell run as Administrator**:
+
+```powershell
+winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements
+# close and reopen PowerShell (as Administrator), then:
+git clone -b claude/eager-ride-t1oaiq https://github.com/systemkunal-pixel/sampleone.git C:\src\sampleone
+powershell -ExecutionPolicy Bypass -File C:\src\sampleone\scripts\install.ps1 -Demo
+```
+
+- **Passwords:** the admin password and the MariaDB root password are printed at the end and saved in `C:\LoanRecovery\credentials.txt` (readable by Administrators only).
+- **Testing from phones on your Wi-Fi:** add `-Public` to open the firewall port. Without HTTPS, phones can't use the camera, GPS or install the app.
+- **Updating:** `git -C C:\src\sampleone pull`, then run the same `install.ps1` command again. Data and passwords are kept.
+- **Logs and control:** the log is at `C:\LoanRecovery\logs\server.log`. Stop or start the server with `Stop-ScheduledTask LoanRecovery` / `Start-ScheduledTask LoanRecovery`.
+- **MariaDB already installed:** add `-DbRootPassword <password>`, or the script will ask for it.
+
 ## What each role can do
 
 **Field officer** (phone, 4–8 digit PIN)

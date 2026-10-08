@@ -2,6 +2,7 @@
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { readImportFile, normalise, checkAgainstDb } from './importer.js';
 import { config } from './config.js';
 import { createPool, migrate, upsertLoan, withTx, now } from './db.js';
@@ -143,7 +144,8 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Run only when started directly (not when imported by tests). pathToFileURL handles Windows paths.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {
     console.error(err.message);
     process.exit(1);
