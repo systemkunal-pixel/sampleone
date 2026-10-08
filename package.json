@@ -1,0 +1,14 @@
+{
+  "name": "loan-recovery-field-app",
+  "version": "1.0.0",
+  "description": "Offline-first loan recovery PWA for field collection officers",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node scripts/serve.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}

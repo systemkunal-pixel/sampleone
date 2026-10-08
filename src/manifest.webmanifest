@@ -1,0 +1,14 @@
+{
+  "name": "Loan Recovery – Field Officer",
+  "short_name": "Recovery",
+  "description": "Offline-first loan recovery app for field collection officers.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f6f5",
+  "theme_color": "#0f5132",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
