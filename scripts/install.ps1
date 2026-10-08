@@ -14,7 +14,7 @@
 
 .PARAMETER Demo            Load demo officers and loans (only into an empty database).
 .PARAMETER Public          Listen on the network (opens the Windows firewall port) - for testing from phones on your Wi-Fi.
-.PARAMETER AppDir          Install folder (default C:\LoanRecovery).
+.PARAMETER AppDir          Install folder (default C:\LoanRecovery). Pass the project folder itself to run the app in place.
 .PARAMETER Port            HTTP port (default 8080).
 .PARAMETER DbName          Database name (default loan_recovery).
 .PARAMETER DbRootPassword  MariaDB root password, if MariaDB was already installed before (you are asked if needed).
@@ -160,11 +160,18 @@ if ($RootPass -eq '') {
 }
 
 # ------------------------------------------------------------------ app files
-Step "Copying the app to $AppDir"
-New-Item -ItemType Directory -Force -Path $AppDir, (Join-Path $AppDir 'logs') | Out-Null
-& robocopy.exe $SrcDir $AppDir /E /XD .git node_modules logs /XF .env credentials.txt /NFL /NDL /NJH /NJS /NP | Out-Null
-if ($LASTEXITCODE -ge 8) { Fail "Copying files failed (robocopy code $LASTEXITCODE)." }
-$global:LASTEXITCODE = 0
+New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
+$AppDir = (Resolve-Path $AppDir).Path.TrimEnd('\', '/')
+$CredFile = Join-Path $AppDir 'credentials.txt'
+New-Item -ItemType Directory -Force -Path (Join-Path $AppDir 'logs') | Out-Null
+if ($AppDir -ieq (Resolve-Path $SrcDir).Path.TrimEnd('\', '/')) {
+  Step "Installing in place in $AppDir"
+} else {
+  Step "Copying the app to $AppDir"
+  & robocopy.exe $SrcDir $AppDir /E /XD .git node_modules logs /XF .env credentials.txt /NFL /NDL /NJH /NJS /NP | Out-Null
+  if ($LASTEXITCODE -ge 8) { Fail "Copying files failed (robocopy code $LASTEXITCODE)." }
+  $global:LASTEXITCODE = 0
+}
 
 # ------------------------------------------------------------------ database & .env
 $envFile = Join-Path $AppDir '.env'

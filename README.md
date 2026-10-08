@@ -38,6 +38,7 @@ git clone -b claude/eager-ride-t1oaiq https://github.com/systemkunal-pixel/sampl
 powershell -ExecutionPolicy Bypass -File C:\src\sampleone\scripts\install.ps1 -Demo
 ```
 
+- **Running from the cloned folder:** add `-AppDir` with the project folder itself, e.g. `-AppDir "E:\Code Works\LoanRecovery"`. The app then runs from there instead of being copied to `C:\LoanRecovery`, and `.env`, `credentials.txt` and `logs\` are git-ignored.
 - **Passwords:** the admin password and the MariaDB root password are printed at the end and saved in `C:\LoanRecovery\credentials.txt` (readable by Administrators only).
 - **Testing from phones on your Wi-Fi:** add `-Public` to open the firewall port. Without HTTPS, phones can't use the camera, GPS or install the app.
 - **Updating:** `git -C C:\src\sampleone pull`, then run the same `install.ps1` command again. Data and passwords are kept.
