@@ -65,8 +65,10 @@ function Write-TextFile([string]$Path, [string]$Text) {
 }
 
 function Protect-File([string]$Path) {
-  # Only Administrators and SYSTEM (the account the server runs as) may read it.
-  & icacls.exe $Path /inheritance:r /grant:r '*S-1-5-32-544:F' '*S-1-5-18:F' | Out-Null
+  # Only you (the account running this installer), Administrators and SYSTEM (the account the server
+  # runs as) may read it. Your own account is listed so a normal, non-elevated Notepad can open it.
+  $me = '*' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  & icacls.exe $Path /inheritance:r /grant:r "${me}:F" '*S-1-5-32-544:F' '*S-1-5-18:F' | Out-Null
 }
 
 # Can this program listen on the port? Windows reserves port ranges for Hyper-V/WSL/Docker, which gives
