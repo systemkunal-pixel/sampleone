@@ -19,9 +19,15 @@ export async function verifyPin(pin, stored) {
   return timingSafeEqual(actual, expected);
 }
 
-export function validPin(pin) {
-  return /^\d{4,8}$/.test(String(pin || ''));
+/** Field staff use a 4–8 digit PIN; admins need a password of 10+ characters with letters and digits. */
+export function validPin(pin, role = 'officer') {
+  const s = String(pin || '');
+  if (role === 'admin') return s.length >= 10 && s.length <= 72 && /[A-Za-z]/.test(s) && /\d/.test(s);
+  return /^\d{4,8}$/.test(s);
 }
+
+export const pinRule = (role) =>
+  role === 'admin' ? 'Password must be 10+ characters with letters and numbers.' : 'PIN must be 4–8 digits.';
 
 const sha256 = (s) => createHash('sha256').update(s).digest('hex');
 

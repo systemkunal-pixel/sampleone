@@ -132,16 +132,19 @@ export async function loadLoans(conn, { officerCode, branch, loanId }) {
 }
 
 /** Inserts or updates a loan (used by the loan import and demo seed). */
-export function upsertLoan(conn, loan) {
+export function upsertLoan(conn, loan, importId = null) {
   return conn.query(
-    `INSERT INTO loans (id, loan_no, branch, officer_code, product, principal, emi, disbursed_on, borrower, installments, follow_up_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO loans (id, loan_no, branch, officer_code, product, principal, emi, disbursed_on, borrower, installments,
+       follow_up_date, created_at, updated_at, import_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE loan_no = VALUES(loan_no), branch = VALUES(branch), officer_code = VALUES(officer_code),
        product = VALUES(product), principal = VALUES(principal), emi = VALUES(emi), disbursed_on = VALUES(disbursed_on),
-       borrower = VALUES(borrower), installments = VALUES(installments)`,
+       borrower = VALUES(borrower), installments = VALUES(installments), updated_at = VALUES(updated_at),
+       import_id = VALUES(import_id)`,
     [
       loan.id, loan.loanNo, loan.branch, loan.officerCode || null, loan.product, loan.principal, loan.emi,
       loan.disbursedOn, JSON.stringify(loan.borrower), JSON.stringify(loan.installments), loan.followUpDate || null,
+      now(), now(), importId,
     ]
   );
 }

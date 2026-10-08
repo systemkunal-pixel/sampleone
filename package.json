@@ -7,12 +7,16 @@
   "scripts": {
     "start": "node server/index.js",
     "admin": "node server/admin.js",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test --test-concurrency=1 tests/*.test.js"
   },
   "engines": {
     "node": ">=20.12"
   },
   "dependencies": {
+    "exceljs": "4.4.0",
     "mariadb": "3.5.4"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
   }
 }

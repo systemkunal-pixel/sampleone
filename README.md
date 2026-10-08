@@ -1,138 +1,154 @@
-# Loan Recovery – Field Officer App
+# Loan Recovery
 
-A loan collection app for field officers, with supervisor verification of bank deposits.
+A loan collection system with three parts:
 
-- **Phone app:** an installable web app (PWA) in `src/`. It's plain HTML, CSS and JavaScript with no build step.
-- **Server:** Node.js in `server/`. It serves the app and a JSON API, with **MariaDB** as the database.
+| Part | Who | Where |
+|---|---|---|
+| **Field app**: installable phone app (PWA) | Field officers and supervisors | `https://<your-domain>/` |
+| **Admin console**: responsive web console | Head office admins | `https://<your-domain>/admin/` |
+| **Server**: Node.js API with a **MariaDB** database | | Serves both of the above |
 
-The app works **in real time**: every payment and visit goes to the server the moment it's saved, and supervisor decisions reach officers within about a minute. If the server can't be reached (no signal, or server maintenance), the app keeps working. Records wait on the phone and are sent automatically when the server is back. The header always shows **● Live**, **Sending…** or **Offline · N queued**.
+No build step is needed. The app is plain HTML, CSS and JavaScript, and the server's only runtime dependencies are `mariadb` and `exceljs`.
 
-## Features
+## What each role can do
 
-**Field officers**
-- **Prioritised visit plan.** Promises to pay due today come first, then broken promises, follow-ups due, days past due and overdue amount. **📍 Near me** shows the distance to each borrower.
-- **Account view.** Dues, next EMI, the active promise, repayment schedule and full history. One-tap Call, WhatsApp and Maps for the borrower and guarantor.
-- **Collect payment:** Cash, UPI, Cheque, Bank transfer, or **Bank deposit**.
-  - Every payment gets a GPS stamp and a sequential receipt (`R-<officer>-<yymmdd>-<seq>`) to share by SMS or WhatsApp, or print.
-  - **Bank deposit:** the borrower paid at the bank. The officer photographs the pay-in slip (or attaches a PDF) and enters the slip number, bank and deposit date. The borrower gets an acknowledgement marked *pending verification*.
-- **Visit logging.** Outcome, promise to pay (date and amount), follow-up date and notes.
-- **Live feedback.** If the server refuses a record, such as a slip already used on another account, the officer sees why straight away. If a supervisor rejects a deposit, it shows on the Today screen with the reason.
+**Field officer** (phone, 4–8 digit PIN)
+- Sees the day's visit plan in priority order: promises due today, then broken promises, follow-ups, and the most overdue loans.
+- Collects payments (Cash, UPI, Cheque, Bank transfer) and issues GPS-stamped receipts.
+- Records **bank deposits** with a photo of the pay-in slip.
+- Logs visits and promises to pay.
+- Works offline. Records are sent the moment the server is reachable, and the header shows **● Live**, **Sending…** or **Offline · N queued**.
 
-**Supervisors**
-- **Deposit verification queue**, oldest first.
-  - Each deposit shows the slip image, the amount entered, slip number, bank, deposit date and who recorded it.
-  - Automatic checks flag a deposit reported more than 7 days late, an amount over 3× the EMI, or a missing GPS stamp.
-- **Verify** or **Reject**. Rejecting needs a reason, and there are quick-pick reasons. A rejected deposit no longer reduces the borrower's dues, and its slip number can be entered again after correction. A deposit can only be decided once, so two supervisors can't both act on it. Every decision is recorded in `audit_log`.
-- Branch-wide accounts and a branch summary.
+**Supervisor** (phone, PIN)
+- Verifies or rejects (with a reason) the bank deposits recorded in their branch, looking at the slip image. Automatic checks flag suspicious deposits.
+- Sees the branch accounts and a branch summary.
 
-**Both:** a portfolio breakdown by days past due, a CSV export of the day's activity, an install-to-home-screen prompt, and protected device storage.
+**Admin** (admin console, password of 10+ characters, 12-hour sessions)
+- **Dashboard:** outstanding, overdue, PAR 30, today's and this month's collections, deposits awaiting verification, unassigned loans, portfolio ageing by days past due (DPD), branch performance and recent activity.
+- **Users:**
+  - Create officers, supervisors and admins, and edit them.
+  - Reset a PIN or password; the new one is shown once and the user is signed out everywhere.
+  - Deactivate or reactivate accounts, with safety rules:
+    - you can't lock yourself out;
+    - there's always at least one admin;
+    - an officer's loans must be reassigned before you deactivate them or move them to another branch.
+- **Loans:** search and filter by branch, officer, DPD band or unassigned, with sorting and paging. You can also:
+  - open a loan to see its details, payments, visits and schedule, and reassign it;
+  - select many loans and assign them to an officer in one go;
+  - export the list to CSV.
+- **Import loans:** upload Excel (.xlsx), CSV or JSON, then review the result before anything is saved (new or updated loans, warnings, and errors with row numbers), download an error report, and confirm. Import history is kept, and a downloadable Excel template is included.
+- **Audit log:** every sign-in (and failed attempt), user change, PIN reset, import, reassignment and deposit decision.
 
-## Running it
+## Loan import format
+
+Download the template from **Import loans → Excel template**. The rules:
+
+- **Matching:** loans are matched on **Loan No**. Re-importing updates the borrower details, schedule and officer. Payments and visits are never changed.
+- **Required columns:** Loan No, Branch, Principal, EMI, Disbursed On, Borrower Name, Phone.
+- **Optional columns:** Officer Code, Product, Tenure, First Due Date, Frequency (monthly / weekly / fortnightly), Business, Address, Village, Latitude, Longitude, Guarantor Name, Guarantor Phone.
+- **Headings are matched flexibly.** For example, "Loan Account No", "Customer Name", "Mobile No", "No of EMIs" and "First EMI Date" are all recognised. Supported aliases are listed in `server/importer.js` (`LOAN_COLUMNS`). Once your system's export file is available, any unrecognised headings only need adding to that list.
+- **Schedule:** if an **Installments** sheet (Loan No, Installment No, Due Date, Amount) has rows for a loan, that exact schedule is used. Otherwise one is generated from Tenure + First Due Date + EMI + Frequency.
+- **Dates:** Excel dates, `DD-MM-YYYY`, `DD/MM/YYYY`, `25-Feb-2026` or `YYYY-MM-DD`. The day always comes first.
+- **Phone:** a 10-digit Indian mobile number. `+91` or a leading `0` is removed automatically.
+- **Officer:** must be an active field officer of the same branch. Leave it blank to import the loan unassigned.
+- **JSON:** an array of loans, either flat rows with the same headings or the API shape (`borrower {…}`, `installments […]`).
+- **Limits:** 10 MB and 20,000 loans per file. Old `.xls` files must be saved as `.xlsx` first.
+
+Rows with errors are skipped. Valid rows can be imported straight away, and the error report lists every problem with its row number. The server re-validates everything when you confirm.
+
+## Setup (local or server)
 
 Requirements: Node.js 20.12 or later, and MariaDB 10.6 or later.
 
 ```bash
-# 1. Database and user (as MariaDB root)
+# 1. Database (as MariaDB root)
 mariadb -e "CREATE DATABASE loan_recovery CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
             CREATE USER 'recovery'@'localhost' IDENTIFIED BY 'a-strong-password';
             GRANT ALL ON loan_recovery.* TO 'recovery'@'localhost';"
 
-# 2. Configure
-cp .env.example .env          # set DB_PASSWORD etc.
-npm install
+# 2. App
+cp .env.example .env            # set DB_PASSWORD (and DB_HOST if MariaDB is on another machine)
+npm ci --omit=dev
 
-# 3. Users and loans (tables are created automatically)
-npm run admin -- seed-demo    # optional demo branch: FO27 / FO31 (PIN 1234), SUP1 (PIN 9999)
-npm run admin -- add-user --code FO40 --name "Anil Rao" --role officer --branch "Lucknow Rural" --pin 4821
-npm run admin -- import-loans loans.json
+# 3. First admin (tables are created automatically)
+npm run admin -- add-user --code ADMIN --name "Your Name" --role admin --branch "Head Office" --pin 'A-strong-pass1'
 
 # 4. Start
-npm start                     # http://localhost:8080
+npm start                       # http://localhost:8080   ·   console at /admin/
 ```
 
-Other admin commands: `set-pin`, `deactivate`, `list-users` and `migrate`. Run `npm run admin` to see them all.
+Sign in to `/admin/`, create officers and supervisors, then import your loans. To try everything with sample data on an empty database instead, run `npm run admin -- seed-demo`. It creates FO27 / FO31 (PIN 1234), SUP1 (PIN 9999) and ADMIN (password `Demo@Admin2026`). **Don't** run it on a production database.
 
-### Production
+Command-line equivalents: `npm run admin -- add-user | set-pin | deactivate | list-users | import-loans <file> | migrate`.
 
-- **HTTPS is required.** Phones only allow camera, GPS, offline mode and installing over HTTPS. Put nginx or Caddy in front of `npm start`, and run it under systemd or pm2 so it restarts on its own.
-- **During maintenance**, the proxy's 502/503 responses are treated as "server unreachable". Officers keep working, and queued records are sent when it's back. Records are de-duplicated by ID, so a resend never creates a double entry.
-- Back up the MariaDB database. It holds everything, including the slip images (`deposit_slips`).
-- Sessions last 30 days (`SESSION_DAYS`). Five wrong PINs lock a code for 15 minutes. `set-pin` and `deactivate` end all of that user's sessions.
+### Moving to another MariaDB server
 
-## Installing on a phone
+Change `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME` in `.env` and restart. The schema is created and upgraded automatically on start. To move existing data, use `mariadb-dump loan_recovery | mariadb -h <new-host> loan_recovery`. Slip images are stored in the database, so nothing else needs copying.
 
-Open the server's HTTPS address once on each phone:
+## Hosting on HTTPS
 
-- **Android (Chrome):** tap **Install** on the banner, or **Install app** in Settings. The app gets its own icon and opens full-screen.
-- **iPhone (Safari):** tap Share → **Add to Home Screen**. The app shows these steps itself.
+HTTPS is required: phones only allow the camera, GPS, offline mode and installing over HTTPS. Ready-made files are in `deploy/`:
 
-For Play Store or MDM distribution, wrap the hosted app as a Trusted Web Activity with [Bubblewrap](https://github.com/GoogleChromeLabs/bubblewrap) or [PWABuilder](https://www.pwabuilder.com/).
+1. Copy the project to `/opt/loan-recovery`, create `.env` (keep `HOST=127.0.0.1`), and run `npm ci --omit=dev`.
+2. Install `deploy/loan-recovery.service` as a systemd service. It starts at boot and restarts on failure.
+3. Set up HTTPS with **either**:
+   - `deploy/nginx.conf` plus `certbot --nginx -d your-domain`, **or**
+   - `deploy/Caddyfile`, where Caddy gets and renews the certificate itself.
 
-## Loan import format
+   Both allow 50 MB request bodies for imports and slips, and add HSTS.
+4. Open `https://your-domain/admin/` and sign in.
 
-`import-loans` upserts by `id`, so re-importing reassigns accounts or updates schedules. Payments and visits are never touched.
+**Maintenance:** while the app is stopped, the proxy answers 502. The field app treats that as "server unreachable": officers keep working, and queued records are sent automatically when the server returns. Records are de-duplicated, so a resend never double-counts.
 
-```json
-[{
-  "id": "L1001", "loanNo": "MFL/24/1001", "branch": "Lucknow Rural", "officerCode": "FO27",
-  "product": "Micro Business Loan", "principal": 50000, "emi": 5167, "disbursedOn": "2026-01-25",
-  "borrower": { "name": "Ramesh Kumar", "phone": "9810000000", "business": "Kirana store",
-                "address": "Ward 4", "village": "Rampur", "lat": 26.851, "lng": 80.949,
-                "guarantor": { "name": "…", "phone": "…" } },
-  "installments": [{ "no": 1, "dueDate": "2026-02-25", "amount": 5167 }]
-}]
-```
+**Backups:** back up the MariaDB database, for example a nightly `mariadb-dump`. It contains everything, including slip images.
+
+## Security
+
+- PINs and passwords are hashed with scrypt.
+- Sessions are random tokens, and only their SHA-256 hash is stored. Field sessions last 30 days and admin sessions 12 hours; admin sessions also end when the browser closes.
+- 5 wrong attempts lock a code for 15 minutes.
+- Deactivating a user, resetting their PIN, or changing their role or branch ends their sessions immediately.
+- Every input is validated on the server. Officers can only record against loans assigned to them, and supervisors only see their own branch.
+- Slip files are checked by their actual file contents (they must really be JPEG, PNG, WebP or PDF).
+- Pages are served with a strict Content-Security-Policy, `X-Frame-Options: DENY` and `nosniff`. CSV exports are protected against formula injection.
+- Every administrative action is written to `audit_log`.
 
 ## API
 
 All endpoints except `login` and `health` need `Authorization: Bearer <token>`.
 
-| Method & path | Who | Purpose |
+| Endpoint | Role | Purpose |
 |---|---|---|
-| `POST /api/login` `{code, pin}` | anyone | Returns `{token, user}` |
-| `POST /api/logout` | any | Ends the session |
-| `GET /api/bootstrap` | any | The officer's accounts (or a supervisor's whole branch) with payments and visits |
-| `POST /api/records` `{records:[…]}` | officer | Stores payments and visits. Returns `accepted`, `duplicate` or `rejected` (with a reason) for each record |
-| `GET /api/slips/:paymentId` | officer (own) / supervisor (branch) | The deposit slip image or PDF |
-| `GET /api/deposits?status=pending\|verified\|rejected` | supervisor | The verification queue |
-| `POST /api/deposits/:paymentId/decision` `{decision, note}` | supervisor | `verified` or `rejected` (a note is required to reject) |
-| `GET /api/health` | anyone | Checks the server and its database connection |
-
-**Server-side checks.** Every field is validated, and the officer code comes from the session, not the phone. Payments are checked against the outstanding balance. Slip files must really be JPEG, PNG, WebP or PDF (checked by file signature, max 5 MB). Slip numbers are unique, ignoring case and punctuation, until a supervisor rejects the deposit. The app is served with a strict Content-Security-Policy.
+| `POST /api/login` `{code, pin}` · `POST /api/logout` | all | Sessions |
+| `GET /api/bootstrap` | officer, supervisor | The officer's loans (or a supervisor's branch) with history |
+| `POST /api/records` | officer | Payments and visits. Idempotent per record ID |
+| `GET /api/slips/:paymentId` | officer (own), supervisor (branch), admin | Deposit slip |
+| `GET /api/deposits?status=` · `POST /api/deposits/:id/decision` | supervisor | Verification queue and decisions |
+| `GET /api/admin/summary` | admin | Dashboard figures |
+| `GET/POST /api/admin/users` · `PATCH /api/admin/users/:code` · `POST /api/admin/users/:code/reset-pin` | admin | User management |
+| `GET /api/admin/loans` · `GET/PATCH /api/admin/loans/:id` · `POST /api/admin/loans/assign` · `GET /api/admin/loans/export` | admin | Loans |
+| `GET /api/admin/import/template` · `POST /api/admin/import/preview` · `POST /api/admin/import/commit` · `GET /api/admin/imports` | admin | Import |
+| `GET /api/admin/audit` · `POST /api/admin/me/password` · `GET /api/admin/branches` | admin | Audit, own password, branch list |
 
 ## Project layout
 
 ```
-src/                 the phone app (served as static files)
-  js/app.js          router, officer screens, events
-  js/supervisor.js   deposit verification screens
-  js/store.js        session, live sync, offline outbox
-  js/api.js          API client (tells "server unreachable" apart from "server said no")
-  js/logic.js        pure domain logic, shared with the server (DPD, allocation, validation)
-  js/slips.js        slip image storage (IndexedDB) and compression
-  js/install.js      install prompt and storage protection
-  js/seed.js         demo portfolio (used by `admin seed-demo`)
+src/                  field app (PWA)
+  admin/              admin console: index.html, admin.css, js/main.js, js/views/*.js
 server/
-  index.js           entry point
-  app.js             HTTP routes, static hosting, security headers
-  records.js         validation and storage of officers' records
-  auth.js            PIN hashing (scrypt), sessions, login throttling
-  db.js schema.sql   MariaDB pool, migrations, queries
-  admin.js           admin command-line tool
-tests/               node:test suites
+  index.js            entry point            app.js        routes, static hosting, headers
+  admin-api.js        admin endpoints        importer.js   Excel/CSV/JSON parsing, validation, template
+  records.js          officer record intake  auth.js       PINs, sessions, throttling
+  db.js schema.sql    MariaDB                admin.js      admin command-line tool
+deploy/               nginx, Caddy and systemd files
+tests/                node:test suites
 ```
 
 ## Tests
 
 ```bash
-npm test             # domain logic. The server tests are skipped without a database.
-TEST_DB_USER=recovery TEST_DB_PASSWORD=… TEST_DB_NAME=loan_recovery_test npm test
+npm test                                     # logic and import parsing (database tests are skipped)
+TEST_DB_USER=recovery TEST_DB_PASSWORD=… TEST_DB_NAME=loan_recovery_test npm test   # everything
 ```
 
-The server tests **wipe** the test database. Point them at a dedicated one.
-
-## Not yet included
-
-- Data on the phone (including the session token) is stored unencrypted in the browser. Use managed devices, MDM, for real borrower data.
-- There is no web admin screen. Users and loans are managed with `npm run admin`.
-- Timestamps are local time in the server's `TZ` (default `Asia/Kolkata`).
+The database tests **wipe** the test database, so point them at a dedicated one.

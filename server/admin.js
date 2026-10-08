@@ -1,21 +1,25 @@
 // Admin CLI:  npm run admin -- <command> [options]
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
+import { readImportFile, normalise, checkAgainstDb } from './importer.js';
 import { config } from './config.js';
 import { createPool, migrate, upsertLoan, withTx, now } from './db.js';
-import { hashPin, validPin } from './auth.js';
+import { hashPin, validPin, pinRule } from './auth.js';
 import { seedLoans } from '../src/js/seed.js';
 import { localTimestamp } from '../src/js/logic.js';
 
 const USAGE = `Usage: npm run admin -- <command> [options]
 
   migrate                                   create/upgrade tables
-  add-user --code FO27 --name "Priya Mishra" --role officer|supervisor --branch "Lucknow Rural" --pin 1234
-  set-pin --code FO27 --pin 4321            reset a PIN (logs the user out everywhere)
+  add-user --code FO27 --name "Priya Mishra" --role officer|supervisor|admin --branch "Lucknow Rural" --pin 1234
+                                            (admins: --pin is a password of 10+ chars with letters and digits)
+  set-pin --code FO27 --pin 4321            reset a PIN/password (logs the user out everywhere)
   deactivate --code FO27                    block a user and end their sessions
   list-users
-  import-loans <file.json>                  upsert loans (see README for the format)
-  seed-demo                                 demo branch: officers FO27/FO31 (PIN 1234), supervisor SUP1 (PIN 9999)`;
+  import-loans <file.xlsx|.csv|.json>       validate and upsert loans (same rules as the admin console)
+  seed-demo                                 demo branch: officers FO27/FO31 (PIN 1234), supervisor SUP1 (PIN 9999),
+                                            admin ADMIN (password Demo@Admin2026)`;
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -30,8 +34,8 @@ const need = (...keys) => {
 };
 
 export async function addUser(conn, { code, name, role, branch, pin }) {
-  if (!['officer', 'supervisor'].includes(role)) throw new Error('--role must be officer or supervisor');
-  if (!validPin(pin)) throw new Error('PIN must be 4–8 digits');
+  if (!['officer', 'supervisor', 'admin'].includes(role)) throw new Error('--role must be officer, supervisor or admin');
+  if (!validPin(pin, role)) throw new Error(pinRule(role));
   await conn.query('INSERT INTO users (code, name, role, branch, pin_hash) VALUES (?, ?, ?, ?, ?)', [
     code.toUpperCase(), name, role, branch, await hashPin(pin),
   ]);
@@ -46,6 +50,7 @@ export async function seedDemo(pool) {
     await addUser(conn, { code: 'FO27', name: 'Priya Mishra', role: 'officer', branch, pin: '1234' });
     await addUser(conn, { code: 'FO31', name: 'Ravi Tiwari', role: 'officer', branch, pin: '1234' });
     await addUser(conn, { code: 'SUP1', name: 'Neha Saxena', role: 'supervisor', branch, pin: '9999' });
+    await addUser(conn, { code: 'ADMIN', name: 'Head Office Admin', role: 'admin', branch: 'Head Office', pin: 'Demo@Admin2026' });
     const loans = seedLoans();
     for (const [i, loan] of loans.entries()) {
       await upsertLoan(conn, { ...loan, branch, officerCode: i % 4 === 3 ? 'FO31' : 'FO27' });
@@ -67,16 +72,6 @@ export async function seedDemo(pool) {
   });
 }
 
-function validateLoan(l, i) {
-  const where = `loan #${i + 1}${l?.loanNo ? ` (${l.loanNo})` : ''}`;
-  const req = ['id', 'loanNo', 'branch', 'product', 'principal', 'emi', 'disbursedOn', 'borrower', 'installments'];
-  for (const k of req) if (l?.[k] == null) throw new Error(`${where}: missing "${k}"`);
-  if (!l.borrower.name || !l.borrower.phone) throw new Error(`${where}: borrower needs name and phone`);
-  if (!Array.isArray(l.installments) || !l.installments.every((x) => x.no && /^\d{4}-\d{2}-\d{2}$/.test(x.dueDate) && x.amount > 0)) {
-    throw new Error(`${where}: installments must be [{ no, dueDate: "YYYY-MM-DD", amount }]`);
-  }
-}
-
 async function main() {
   const [cmd, arg] = positionals;
   if (!cmd) return console.log(USAGE);
@@ -94,8 +89,10 @@ async function main() {
         break;
       case 'set-pin': {
         need('code', 'pin');
-        if (!validPin(values.pin)) throw new Error('PIN must be 4–8 digits');
         const code = values.code.toUpperCase();
+        const [u] = await pool.query('SELECT role FROM users WHERE code = ?', [code]);
+        if (!u) throw new Error(`No user ${code}`);
+        if (!validPin(values.pin, u.role)) throw new Error(pinRule(u.role));
         const r = await pool.query('UPDATE users SET pin_hash = ? WHERE code = ?', [await hashPin(values.pin), code]);
         if (!r.affectedRows) throw new Error(`No user ${code}`);
         await pool.query('DELETE s FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.code = ?', [code]);
@@ -116,18 +113,26 @@ async function main() {
         break;
       case 'import-loans': {
         if (!arg) throw new Error(`File path required.\n\n${USAGE}`);
-        const loans = JSON.parse(await readFile(arg, 'utf8'));
-        if (!Array.isArray(loans)) throw new Error('File must contain a JSON array of loans.');
-        loans.forEach(validateLoan);
-        await withTx(pool, async (conn) => {
-          for (const l of loans) await upsertLoan(conn, l);
+        const parsed = await readImportFile(basename(arg), await readFile(arg));
+        if (parsed.missingHeaders.length) throw new Error(`Missing required columns: ${parsed.missingHeaders.join(', ')}`);
+        const { valid, errors } = normalise(parsed);
+        const rows = await checkAgainstDb(pool, valid, errors);
+        for (const e of errors) console.error(`  Row ${e.rowNo}${e.loanNo ? ` (${e.loanNo})` : ''}: ${e.errors.join(' ')}`);
+        if (errors.length) throw new Error(`${errors.length} row(s) have errors; nothing was imported.`);
+        const result = await withTx(pool, async (conn) => {
+          const created = rows.filter((r) => r.action === 'create').length;
+          const res = await conn.query(
+            'INSERT INTO imports (at, user_code, file_name, total_rows, created, updated, skipped) VALUES (?, ?, ?, ?, ?, ?, 0)',
+            [now(), 'CLI', basename(arg), rows.length, created, rows.length - created]);
+          for (const r of rows) await upsertLoan(conn, r.loan, res.insertId);
+          return { created, updated: rows.length - created };
         });
-        console.log(`Imported ${loans.length} loans at ${localTimestamp()}.`);
+        console.log(`Imported ${rows.length} loans (${result.created} new, ${result.updated} updated) at ${localTimestamp()}.`);
         break;
       }
       case 'seed-demo':
         await seedDemo(pool);
-        console.log('Demo data loaded. Officers FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999).');
+        console.log('Demo data loaded. Officers FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999), admin ADMIN (Demo@Admin2026).');
         break;
       default:
         console.log(USAGE);

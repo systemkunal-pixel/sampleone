@@ -1,13 +1,16 @@
-// HTTP API + static hosting of the app. One process serves both, so the app and API share an origin.
+// HTTP API + static hosting of the field app (/) and admin console (/admin/). One origin for everything.
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { isoDate, lastReceiptSeq } from '../src/js/logic.js';
 import { createSession, userForToken, deleteSession, verifyPin, LoginThrottle } from './auth.js';
 import { loadLoans, paymentFromRow, withTx, audit, now } from './db.js';
 import { acceptRecord, MAX_SLIP_BYTES } from './records.js';
+import { HttpError, send, readJson, Router } from './http.js';
+import { mountAdmin } from './admin-api.js';
 
 const STATIC_DIR = resolve(import.meta.dirname, '..', 'src');
 const MAX_BODY = Math.ceil(MAX_SLIP_BYTES * 1.4) + 64 * 1024; // one record with a base64 slip
+const ADMIN_SESSION_DAYS = 0.5; // admins re-authenticate every 12 hours
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -16,52 +19,15 @@ const TYPES = {
   '.png': 'image/png',
   '.webmanifest': 'application/manifest+json',
 };
-const SECURITY_HEADERS = {
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'same-origin',
-  'X-Frame-Options': 'DENY',
-};
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; " +
   "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
-
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
-
-function send(res, status, body, headers = {}) {
-  const isBuf = Buffer.isBuffer(body);
-  res.writeHead(status, {
-    ...SECURITY_HEADERS,
-    'Cache-Control': 'no-store',
-    ...(isBuf ? {} : { 'Content-Type': 'application/json; charset=utf-8' }),
-    ...headers,
-  });
-  res.end(isBuf ? body : JSON.stringify(body));
-}
-
-async function readJson(req) {
-  if (!/application\/json/.test(req.headers['content-type'] || '')) throw new HttpError(415, 'Expected JSON.');
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY) throw new HttpError(413, 'Request too large.');
-    chunks.push(chunk);
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
-  } catch {
-    throw new HttpError(400, 'Invalid JSON.');
-  }
-}
 
 const publicUser = (u) => ({ code: u.code, name: u.name, role: u.role, branch: u.branch });
 
 export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR }) {
   const throttle = new LoginThrottle();
+  const router = new Router();
+  const json = (req, max = MAX_BODY) => readJson(req, max);
 
   async function authed(req, role) {
     const token = (req.headers.authorization || '').replace(/^Bearer /, '');
@@ -71,130 +37,139 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR }) {
     return { user, token };
   }
 
-  const routes = {
-    'GET /api/health': async () => {
-      await pool.query('SELECT 1');
-      return { ok: true, time: now() };
-    },
+  router.add('GET', '/api/health', async () => {
+    await pool.query('SELECT 1');
+    return { ok: true, time: now() };
+  });
 
-    'POST /api/login': async (req) => {
-      const { code, pin } = await readJson(req);
-      const key = String(code || '').trim().toUpperCase();
-      if (!key || !pin) throw new HttpError(400, 'Enter your officer code and PIN.');
-      const wait = throttle.lockedFor(key);
-      if (wait) throw new HttpError(429, `Too many wrong PINs. Try again in ${Math.ceil(wait / 60000)} minutes.`);
-      const [user] = await pool.query('SELECT * FROM users WHERE code = ? AND active = 1', [key]);
-      if (!user || !(await verifyPin(pin, user.pin_hash))) {
-        throttle.fail(key);
-        await audit(pool, key, 'login_failed', null, null);
-        throw new HttpError(401, 'Wrong officer code or PIN.');
+  router.add('POST', '/api/login', async (req) => {
+    const { code, pin } = await json(req);
+    const key = String(code || '').trim().toUpperCase();
+    if (!key || !pin) throw new HttpError(400, 'Enter your code and PIN.');
+    const wait = throttle.lockedFor(key);
+    if (wait) throw new HttpError(429, `Too many wrong attempts. Try again in ${Math.ceil(wait / 60000)} minutes.`);
+    const [user] = await pool.query('SELECT * FROM users WHERE code = ? AND active = 1', [key]);
+    if (!user || !(await verifyPin(pin, user.pin_hash))) {
+      throttle.fail(key);
+      await audit(pool, key, 'login_failed', null, null);
+      throw new HttpError(401, 'Wrong code or PIN.');
+    }
+    throttle.succeed(key);
+    const token = await createSession(pool, user.id, user.role === 'admin' ? ADMIN_SESSION_DAYS : sessionDays);
+    await pool.query('UPDATE users SET last_login_at = ? WHERE id = ?', [now(), user.id]);
+    await audit(pool, user.code, 'login', null, null);
+    return { token, user: publicUser(user) };
+  });
+
+  router.add('POST', '/api/logout', async (req) => {
+    const { token } = await authed(req);
+    await deleteSession(pool, token);
+    return { ok: true };
+  });
+
+  /** Everything the field app needs to render: the officer's (or branch's) loans with history. */
+  router.add('GET', '/api/bootstrap', async (req) => {
+    const { user } = await authed(req);
+    if (user.role === 'admin') throw new HttpError(403, 'Admin accounts use the admin console at /admin/.');
+    const loans = user.role === 'officer'
+      ? await loadLoans(pool, { officerCode: user.code })
+      : await loadLoans(pool, { branch: user.branch });
+    const today = isoDate();
+    const todays = await pool.query(
+      'SELECT receipt_no FROM payments WHERE officer_code = ? AND recorded_at >= ?', [user.code, `${today} 00:00:00`]);
+    return {
+      user: publicUser(user),
+      loans,
+      serverTime: now(),
+      receiptSeq: { date: today, seq: lastReceiptSeq(todays.map((r) => r.receipt_no), user.code, today) },
+    };
+  });
+
+  router.add('POST', '/api/records', async (req) => {
+    const { user } = await authed(req, 'officer');
+    const { records } = await json(req);
+    if (!Array.isArray(records) || records.length > 50) throw new HttpError(400, 'Send 1–50 records.');
+    const results = [];
+    for (const item of records) results.push(await acceptRecord(pool, user, item));
+    return { results };
+  });
+
+  router.add('GET', '/api/slips/:id', async (req, res, { id }) => {
+    const { user } = await authed(req);
+    const [row] = await pool.query(
+      `SELECT s.mime_type, s.data, l.officer_code, l.branch FROM deposit_slips s
+       JOIN payments p ON p.id = s.payment_id JOIN loans l ON l.id = p.loan_id WHERE s.payment_id = ?`, [id]);
+    const allowed = row && (
+      user.role === 'admin' ||
+      (user.role === 'supervisor' ? row.branch === user.branch : row.officer_code === user.code));
+    if (!allowed) throw new HttpError(404, 'Slip not found.');
+    send(res, 200, row.data, {
+      'Content-Type': row.mime_type,
+      'Content-Disposition': `inline; filename="slip-${id}${row.mime_type === 'application/pdf' ? '.pdf' : ''}"`,
+      'Cache-Control': 'private, max-age=86400',
+      'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox",
+    });
+  });
+
+  /** Supervisor queue of bank deposits in their branch. */
+  router.add('GET', '/api/deposits', async (req, res, params, query) => {
+    const { user } = await authed(req, 'supervisor');
+    const status = query.get('status') || 'pending';
+    if (!['pending', 'verified', 'rejected'].includes(status)) throw new HttpError(400, 'Unknown status.');
+    const rows = await pool.query(
+      `SELECT p.*, l.loan_no, l.borrower, l.emi, u.name AS officer_name FROM payments p
+       JOIN loans l ON l.id = p.loan_id LEFT JOIN users u ON u.code = p.officer_code
+       WHERE l.branch = ? AND p.verification = ?
+       ORDER BY ${status === 'pending' ? 'p.recorded_at ASC' : 'p.verified_at DESC'} LIMIT 200`,
+      [user.branch, status]);
+    return {
+      deposits: rows.map((r) => ({
+        ...paymentFromRow(r),
+        loanId: r.loan_id,
+        loanNo: r.loan_no,
+        emi: r.emi,
+        borrower: JSON.parse(r.borrower).name,
+        officerName: r.officer_name || r.officer_code,
+      })),
+    };
+  });
+
+  router.add('POST', '/api/deposits/:id/decision', async (req, res, { id }) => {
+    const { user } = await authed(req, 'supervisor');
+    const { decision, note } = await json(req);
+    if (!['verified', 'rejected'].includes(decision)) throw new HttpError(400, 'Decision must be verified or rejected.');
+    const reason = String(note || '').trim().slice(0, 300);
+    if (decision === 'rejected' && !reason) throw new HttpError(400, 'Give a reason for rejecting the deposit.');
+    return withTx(pool, async (conn) => {
+      const [p] = await conn.query(
+        `SELECT p.verification, p.verified_by, l.branch FROM payments p JOIN loans l ON l.id = p.loan_id
+         WHERE p.id = ? AND p.slip_no IS NOT NULL FOR UPDATE`, [id]);
+      if (!p || p.branch !== user.branch) throw new HttpError(404, 'Deposit not found.');
+      if (p.verification !== 'pending') {
+        throw new HttpError(409, `Already ${p.verification} by ${p.verified_by}.`);
       }
-      throttle.succeed(key);
-      const token = await createSession(pool, user.id, sessionDays);
-      await audit(pool, user.code, 'login', null, null);
-      return { token, user: publicUser(user) };
-    },
+      // Clearing slip_key on rejection frees the slip number to be entered again correctly.
+      await conn.query(
+        `UPDATE payments SET verification = ?, verified_by = ?, verified_at = ?, verification_note = ?,
+           slip_key = IF(? = 'rejected', NULL, slip_key) WHERE id = ?`,
+        [decision, user.code, now(), reason || null, decision, id]);
+      await audit(conn, user.code, `deposit_${decision}`, id, reason ? { note: reason } : null);
+      const [row] = await conn.query('SELECT * FROM payments WHERE id = ?', [id]);
+      return { payment: paymentFromRow(row) };
+    });
+  });
 
-    'POST /api/logout': async (req) => {
-      const { token } = await authed(req);
-      await deleteSession(pool, token);
-      return { ok: true };
-    },
-
-    /** Everything the app needs to render: the user's (or branch's) loans with history. */
-    'GET /api/bootstrap': async (req) => {
-      const { user } = await authed(req);
-      const loans = user.role === 'officer'
-        ? await loadLoans(pool, { officerCode: user.code })
-        : await loadLoans(pool, { branch: user.branch });
-      const today = isoDate();
-      const todays = await pool.query(
-        'SELECT receipt_no FROM payments WHERE officer_code = ? AND recorded_at >= ?', [user.code, `${today} 00:00:00`]);
-      return {
-        user: publicUser(user),
-        loans,
-        serverTime: now(),
-        receiptSeq: { date: today, seq: lastReceiptSeq(todays.map((r) => r.receipt_no), user.code, today) },
-      };
-    },
-
-    'POST /api/records': async (req) => {
-      const { user } = await authed(req, 'officer');
-      const { records } = await readJson(req);
-      if (!Array.isArray(records) || records.length > 50) throw new HttpError(400, 'Send 1–50 records.');
-      const results = [];
-      for (const item of records) results.push(await acceptRecord(pool, user, item));
-      return { results };
-    },
-
-    'GET /api/slips/:id': async (req, res, id) => {
-      const { user } = await authed(req);
-      const [row] = await pool.query(
-        `SELECT s.mime_type, s.data, l.officer_code, l.branch FROM deposit_slips s
-         JOIN payments p ON p.id = s.payment_id JOIN loans l ON l.id = p.loan_id WHERE s.payment_id = ?`, [id]);
-      const allowed = row && (user.role === 'supervisor' ? row.branch === user.branch : row.officer_code === user.code);
-      if (!allowed) throw new HttpError(404, 'Slip not found.');
-      send(res, 200, row.data, {
-        'Content-Type': row.mime_type,
-        'Content-Disposition': `inline; filename="slip-${id}${row.mime_type === 'application/pdf' ? '.pdf' : ''}"`,
-        'Cache-Control': 'private, max-age=86400',
-        'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox",
-      });
-    },
-
-    /** Supervisor queue of bank deposits in their branch. */
-    'GET /api/deposits': async (req) => {
-      const { user } = await authed(req, 'supervisor');
-      const status = new URL(req.url, 'http://x').searchParams.get('status') || 'pending';
-      if (!['pending', 'verified', 'rejected'].includes(status)) throw new HttpError(400, 'Unknown status.');
-      const rows = await pool.query(
-        `SELECT p.*, l.loan_no, l.borrower, l.emi, u.name AS officer_name FROM payments p
-         JOIN loans l ON l.id = p.loan_id LEFT JOIN users u ON u.code = p.officer_code
-         WHERE l.branch = ? AND p.verification = ?
-         ORDER BY ${status === 'pending' ? 'p.recorded_at ASC' : 'p.verified_at DESC'} LIMIT 200`,
-        [user.branch, status]);
-      return {
-        deposits: rows.map((r) => ({
-          ...paymentFromRow(r),
-          loanId: r.loan_id,
-          loanNo: r.loan_no,
-          emi: r.emi,
-          borrower: JSON.parse(r.borrower).name,
-          officerName: r.officer_name || r.officer_code,
-        })),
-      };
-    },
-
-    'POST /api/deposits/:id/decision': async (req, res, id) => {
-      const { user } = await authed(req, 'supervisor');
-      const { decision, note } = await readJson(req);
-      if (!['verified', 'rejected'].includes(decision)) throw new HttpError(400, 'Decision must be verified or rejected.');
-      const reason = String(note || '').trim().slice(0, 300);
-      if (decision === 'rejected' && !reason) throw new HttpError(400, 'Give a reason for rejecting the deposit.');
-      return withTx(pool, async (conn) => {
-        const [p] = await conn.query(
-          `SELECT p.verification, p.verified_by, l.branch FROM payments p JOIN loans l ON l.id = p.loan_id
-           WHERE p.id = ? AND p.slip_no IS NOT NULL FOR UPDATE`, [id]);
-        if (!p || p.branch !== user.branch) throw new HttpError(404, 'Deposit not found.');
-        if (p.verification !== 'pending') {
-          throw new HttpError(409, `Already ${p.verification} by ${p.verified_by}.`);
-        }
-        // Clearing slip_key on rejection frees the slip number to be entered again correctly.
-        await conn.query(
-          `UPDATE payments SET verification = ?, verified_by = ?, verified_at = ?, verification_note = ?,
-             slip_key = IF(? = 'rejected', NULL, slip_key) WHERE id = ?`,
-          [decision, user.code, now(), reason || null, decision, id]);
-        await audit(conn, user.code, `deposit_${decision}`, id, reason ? { note: reason } : null);
-        const [row] = await conn.query('SELECT * FROM payments WHERE id = ?', [id]);
-        return { payment: paymentFromRow(row) };
-      });
-    },
-  };
+  mountAdmin(router, { pool, authed: (req) => authed(req, 'admin'), readJson: json });
 
   async function serveStatic(req, res) {
     if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Method not allowed.');
-    const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-    const file = normalize(join(staticDir, path.endsWith('/') ? `${path}index.html` : path));
+    let path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    if (path === '/admin') {
+      res.writeHead(301, { Location: '/admin/' }).end();
+      return;
+    }
+    if (path.endsWith('/')) path += 'index.html';
+    const file = normalize(join(staticDir, path));
     if (!file.startsWith(staticDir + sep)) throw new HttpError(403, 'Forbidden.');
     let body;
     try {
@@ -211,19 +186,12 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR }) {
 
   return async function handle(req, res) {
     try {
-      const { pathname } = new URL(req.url, 'http://x');
-      if (!pathname.startsWith('/api/')) return await serveStatic(req, res);
-      const parts = pathname.split('/');
-      // Match /api/x/:id and /api/x/:id/y patterns.
-      let key = `${req.method} ${pathname}`;
-      let param;
-      if (!routes[key] && parts.length >= 4) {
-        param = decodeURIComponent(parts[3]);
-        key = `${req.method} ${['', ...parts.slice(1, 3), ':id', ...parts.slice(4)].join('/')}`;
-      }
-      const route = routes[key];
-      if (!route) throw new HttpError(404, 'Not found.');
-      const result = await route(req, res, param);
+      const url = new URL(req.url, 'http://x');
+      if (!url.pathname.startsWith('/api/')) return await serveStatic(req, res);
+      const found = router.match(req.method, url.pathname);
+      if (!found) throw new HttpError(404, 'Not found.');
+      if (found.methodNotAllowed) throw new HttpError(405, 'Method not allowed.');
+      const result = await found.handler(req, res, found.params, url.searchParams);
       if (!res.headersSent) send(res, 200, result);
     } catch (err) {
       if (res.headersSent) return res.end();

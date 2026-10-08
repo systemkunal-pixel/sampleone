@@ -240,7 +240,8 @@ function viewLoan(id) {
   const st = loanStatus(loan, today);
   const b = loan.borrower;
   const ptp = activePromise(loan);
-  const mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${b.lat},${b.lng}`;
+  const dest = b.lat != null && b.lng != null ? `${b.lat},${b.lng}` : [b.address, b.village].filter(Boolean).join(', ');
+  const mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
   const history = [
     ...loan.payments.map((p) => ({ at: p.at, html: paymentLine(loan, p), synced: p.synced })),
     ...loan.visits.map((v) => ({
@@ -486,6 +487,13 @@ async function route({ keepScroll = false } = {}) {
   if (!session || session.expired) {
     $nav.hidden = true;
     $app.innerHTML = viewLogin();
+    return;
+  }
+  if (store.user().role === 'admin') {
+    $nav.hidden = true;
+    $app.innerHTML = `${header('Admin account')}
+      <section class="card"><p>Admin accounts don't use the field app.</p>
+        <div class="actions"><a class="btn primary" href="admin/">Open the admin console</a><button class="btn" data-action="logout">Log out</button></div></section>`;
     return;
   }
   const hash = location.hash.replace(/^#\/?/, '');

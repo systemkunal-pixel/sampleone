@@ -1,0 +1,25 @@
+# /etc/systemd/system/loan-recovery.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now loan-recovery
+#   journalctl -u loan-recovery -f
+[Unit]
+Description=Loan Recovery server
+After=network.target mariadb.service
+Wants=mariadb.service
+
+[Service]
+Type=simple
+User=recovery
+WorkingDirectory=/opt/loan-recovery
+ExecStart=/usr/bin/node server/index.js
+Environment=NODE_ENV=production
+# Settings come from /opt/loan-recovery/.env (DB_*, PORT, TZ …)
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/loan-recovery
+
+[Install]
+WantedBy=multi-user.target
