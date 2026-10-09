@@ -89,14 +89,14 @@ function renderLogin(message = '') {
 
 function renderCodeStep(step) {
   const enrolling = step.stage === 'enroll';
-  const qr = enrolling ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(step.qrSvg)}` : '';
+  const qr = enrolling && step.qrSvg ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(step.qrSvg)}` : '';
   loginFrame(`
     <form class="login-card form" id="code-form" novalidate style="width:min(${enrolling ? 520 : 380}px,100%)">
       <div><h2>${enrolling ? 'Set up your authenticator' : 'Enter your code'}</h2>
         <p class="muted">Step 2 of 2 · ${enrolling ? 'one-time setup on your phone' : 'from your authenticator app'}</p></div>
       ${enrolling ? `
         <div class="enroll">
-          <img src="${qr}" alt="QR code for the authenticator app">
+          ${qr ? `<img src="${qr}" alt="QR code for the authenticator app">` : '<div class="info-box">QR code unavailable — use the setup key.</div>'}
           <div class="stack" style="gap:10px">
             <ol class="steps">
               <li>Install <b>Google Authenticator</b>, <b>Microsoft Authenticator</b> or <b>Authy</b> on your phone.</li>

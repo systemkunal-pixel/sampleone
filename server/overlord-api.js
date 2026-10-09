@@ -3,7 +3,6 @@
 // Everything done here is written to overlord_audit; work inside a company happens only through a
 // time-boxed, logged support session.
 import { randomBytes } from 'node:crypto';
-import QRCode from 'qrcode-svg';
 import { loanStatus, isoDate, addDays } from '../src/js/logic.js';
 import {
   hashPin, verifyPin, validPin, pinRule, sha256, sqlTime, LoginThrottle, createSupportSession,
@@ -39,7 +38,17 @@ function oaudit(conn, ctx, action, companyId, detail) {
       detail == null ? null : JSON.stringify(detail), ctx.ip ?? null]);
 }
 
-const qrSvg = (text) => new QRCode({ content: text, padding: 2, width: 220, height: 220, ecl: 'M', join: true, xmlDeclaration: false }).svg();
+// Loaded on first use, so a missing package (npm ci not yet run after an update) only hides the QR
+// code instead of stopping the whole server; the setup key still works.
+async function qrSvg(text) {
+  try {
+    const { default: QRCode } = await import('qrcode-svg');
+    return new QRCode({ content: text, padding: 2, width: 220, height: 220, ecl: 'M', join: true, xmlDeclaration: false }).svg();
+  } catch (err) {
+    console.error(`QR code unavailable (${err.code || err.message}); run npm ci.`);
+    return null;
+  }
+}
 
 // ---------- cross-company figures ----------
 
@@ -170,7 +179,7 @@ export function mountOverlord(router, { pool, readJson }) {
       await pool.query('UPDATE overlords SET totp_secret = ? WHERE id = ?', [secret, o.id]);
     }
     const url = otpauthUrl(secret, o.email);
-    return { stage: 'enroll', ticket, secret, otpauthUrl: url, qrSvg: qrSvg(url) };
+    return { stage: 'enroll', ticket, secret, otpauthUrl: url, qrSvg: await qrSvg(url) };
   });
 
   open('POST', '/login/verify', async ({ req }) => {
