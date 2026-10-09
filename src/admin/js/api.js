@@ -1,4 +1,6 @@
 // Admin API client. The session lives in sessionStorage, so closing the browser logs the admin out.
+import { t, tr } from '../../i18n/i18n.js';
+
 const KEY = 'loan-recovery:admin';
 
 export const session = {
@@ -42,16 +44,16 @@ async function request(url, { method = 'GET', body, raw = false, auth = true } =
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new ApiError(0, 'Cannot reach the server. Check your connection.');
+    throw new ApiError(0, t('Cannot reach the server. Check your connection.'));
   }
   if (res.status === 401 && auth) {
     session.clear();
     onExpired();
-    throw new ApiError(401, 'Your session has expired. Please sign in again.');
+    throw new ApiError(401, t('Your session has expired. Please sign in again.'));
   }
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, data.error || `Request failed (HTTP ${res.status}).`, data);
+    throw new ApiError(res.status, data.error ? tr(data.error) : t('Request failed (HTTP {status}).', { status: res.status }), data);
   }
   return raw ? res : res.json();
 }
@@ -63,7 +65,7 @@ export async function login(company, code, pin) {
   const res = await request('../api/login', { method: 'POST', body: { company, code, pin }, auth: false });
   if (res.user.role !== 'admin') {
     await request('../api/logout', { method: 'POST', raw: true, auth: false }).catch(() => {});
-    throw new ApiError(403, 'This console is for admin accounts. Field staff use the mobile app.');
+    throw new ApiError(403, t('This console is for admin accounts. Field staff use the mobile app.'));
   }
   session.set(res);
   return res.user;

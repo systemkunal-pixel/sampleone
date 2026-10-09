@@ -419,6 +419,20 @@ dialog.dlg::backdrop { background: rgb(10 16 13 / .5); }
 .login-card { width: min(380px, 100%); }
 .login-card h2 { font-size: 1.4rem; margin-bottom: 6px; }
 .login-card > p { color: var(--muted); margin: 0 0 24px; }
+.login-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+
+/* Language picker (login card and account menu) */
+.lang-select { display: inline-flex; flex: none; }
+.lang-select select {
+  appearance: none; min-height: 32px; padding: 4px 28px 4px 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background-color: var(--surface); color: var(--text); font: inherit; font-size: .85rem; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%; background-size: 5px 5px; background-repeat: no-repeat;
+}
+.lang-select select:focus { outline: none; box-shadow: var(--focus); border-color: var(--brand); }
+.menu-lang { display: flex; align-items: center; gap: 10px; padding: 6px 10px; color: var(--text); }
+.menu-lang .lang-select, .menu-lang select { flex: 1; width: 100%; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {

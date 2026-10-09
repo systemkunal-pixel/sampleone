@@ -1,5 +1,7 @@
 import { session, login, logout, api, me, adoptSupportToken, setExpiredHandler } from './api.js';
 import { esc, icon, initials, toast, dialog, closeDrawer } from './ui.js';
+import { t, tr, loadLang, getLang, langSelect, bindLangSelect } from '../../i18n/i18n.js';
+import { loadHelpLang } from '../../help/content.js';
 import * as dashboard from './views/dashboard.js';
 import * as users from './views/users.js';
 import * as loans from './views/loans.js';
@@ -9,6 +11,8 @@ import * as help from './views/help.js';
 
 const $root = document.getElementById('root');
 
+// Labels stay English here and are translated where shown: t(p.label).
+/* i18n: t('Dashboard') t('Users') t('Loans') t('Import loans') t('Audit log') t('Help & guides') */
 const PAGES = [
   { path: 'dashboard', label: 'Dashboard', icon: 'dashboard', view: dashboard },
   { path: 'users', label: 'Users', icon: 'users', view: users },
@@ -40,51 +44,58 @@ async function loadContext() {
 
 // ---------- login ----------
 
+let loginMessage = ''; // kept so a language switch can re-render the sign-in screen as it was
+
 function renderLogin(message = '') {
-  document.title = 'Sign in · LoanDesk Admin';
+  loginMessage = message;
+  document.title = t('Sign in · LoanDesk Admin');
   $root.innerHTML = `
     <div class="login">
       <section class="login-art">
         <div>
           <img src="../icons/icon-192.png" alt="">
-          <h1>LoanDesk<br>Admin Console</h1>
-          <p>Manage field staff, loan portfolios and imports for every branch from one place.</p>
+          <h1>LoanDesk<br>${t('Admin Console')}</h1>
+          <p>${t('Manage field staff, loan portfolios and imports for every branch from one place.')}</p>
           <ul>
-            <li>${icon('users')} Officers, supervisors and admins</li>
-            <li>${icon('upload')} Excel, CSV and JSON loan imports with validation</li>
-            <li>${icon('loans')} Portfolio ageing and branch performance</li>
-            <li>${icon('shield')} Full audit trail of every change</li>
+            <li>${icon('users')} ${t('Officers, supervisors and admins')}</li>
+            <li>${icon('upload')} ${t('Excel, CSV and JSON loan imports with validation')}</li>
+            <li>${icon('loans')} ${t('Portfolio ageing and branch performance')}</li>
+            <li>${icon('shield')} ${t('Full audit trail of every change')}</li>
           </ul>
         </div>
-        <small>Authorised personnel only. Activity is logged.</small>
+        <small>${t('Authorised personnel only. Activity is logged.')}</small>
       </section>
       <section class="login-form">
         <form class="login-card form" id="login-form" novalidate>
-          <div>
-            <h2>Sign in</h2>
-            <p class="muted">Use your admin code and password.</p>
+          <div class="login-card-head">
+            <div>
+              <h2>${t('Sign in')}</h2>
+              <p class="muted">${t('Use your admin code and password.')}</p>
+            </div>
+            ${langSelect('login-lang', esc(t('Language')))}
           </div>
           ${message ? `<div class="info-box">${esc(message)}</div>` : ''}
-          <label class="field"><span>Company code</span>
+          <label class="field"><span>${t('Company code')}</span>
             <input class="input" name="company" autocomplete="organization" autocapitalize="characters" maxlength="12" value="${esc(rememberedCompany())}" ${rememberedCompany() ? '' : 'autofocus'}>
-            <span class="hint">Given to you by LoanDesk, e.g. BRMC.</span>
+            <span class="hint">${t('Given to you by LoanDesk, e.g. BRMC.')}</span>
           </label>
-          <label class="field"><span>Admin code</span>
+          <label class="field"><span>${t('Admin code')}</span>
             <input class="input" name="code" required autocomplete="username" autocapitalize="characters" ${rememberedCompany() ? 'autofocus' : ''}>
           </label>
-          <label class="field"><span>Password</span>
+          <label class="field"><span>${t('Password')}</span>
             <div class="input-group">
               <input class="input" name="pin" type="password" required autocomplete="current-password">
-              <button type="button" class="icon-btn" data-toggle-pw aria-label="Show password">${icon('eye')}</button>
+              <button type="button" class="icon-btn" data-toggle-pw aria-label="${esc(t('Show password'))}">${icon('eye')}</button>
             </div>
           </label>
           <div class="error-box" id="login-error" role="alert"></div>
-          <button class="btn primary block" type="submit">Sign in</button>
-          <p class="muted small">Sessions end after 12 hours or when you close the browser.</p>
+          <button class="btn primary block" type="submit">${t('Sign in')}</button>
+          <p class="muted small">${t('Sessions end after 12 hours or when you close the browser.')}</p>
         </form>
       </section>
     </div>`;
   const form = document.getElementById('login-form');
+  bindLangSelect(form);
   form.querySelector('[data-toggle-pw]').onclick = () => {
     form.pin.type = form.pin.type === 'password' ? 'text' : 'password';
   };
@@ -93,12 +104,12 @@ function renderLogin(message = '') {
     const err = document.getElementById('login-error');
     err.textContent = '';
     if (!form.code.value.trim() || !form.pin.value) {
-      err.textContent = 'Enter your code and password.';
+      err.textContent = t('Enter your code and password.');
       return;
     }
     const btn = form.querySelector('[type=submit]');
     btn.disabled = true;
-    btn.textContent = 'Signing in…';
+    btn.textContent = t('Signing in…');
     try {
       const company = form.company.value.trim().toUpperCase();
       await login(company, form.code.value.trim(), form.pin.value);
@@ -108,9 +119,9 @@ function renderLogin(message = '') {
       if (!location.hash || location.hash === '#/login') location.hash = '#/dashboard';
       route();
     } catch (ex) {
-      err.textContent = ex.message;
+      err.textContent = tr(ex.message);
       btn.disabled = false;
-      btn.textContent = 'Sign in';
+      btn.textContent = t('Sign in');
     }
   };
 }
@@ -122,9 +133,10 @@ let pendingDeposits = null;
 function supportBanner(user) {
   if (!user.support) return '';
   return `<div class="support-banner" role="status">
-    ${icon('headset')}<span><b>Support session</b> · inside ${esc(user.company.name)} as LoanDesk support (${esc(user.support.overlordName)}) ·
-    everything you do is logged · ends in <b id="support-left">–</b></span>
-    <button class="btn sm" id="support-exit">Exit</button></div>`;
+    ${icon('headset')}<span><b>${t('Support session')}</b> · ${t('inside {company} as LoanDesk support ({name}) · everything you do is logged · ends in {time}', {
+      company: esc(user.company.name), name: esc(user.support.overlordName), time: '<b id="support-left">–</b>',
+    })}</span>
+    <button class="btn sm" id="support-exit">${t('Exit')}</button></div>`;
 }
 
 let supportTimer = null;
@@ -139,7 +151,7 @@ function startSupportClock(user) {
     if (!left) {
       clearInterval(supportTimer);
       session.clear();
-      renderLogin('The support session has ended (45 minutes).');
+      renderLogin(t('The support session has ended (45 minutes).'));
     }
   };
   tick();
@@ -147,7 +159,7 @@ function startSupportClock(user) {
   document.getElementById('support-exit').onclick = async () => {
     clearInterval(supportTimer);
     await logout();
-    renderLogin('Support session ended. You can close this tab.');
+    renderLogin(t('Support session ended. You can close this tab.'));
   };
 }
 
@@ -156,39 +168,40 @@ function renderShell() {
   $root.innerHTML = `
     ${supportBanner(user)}
     <div class="shell ${user.support ? 'with-banner' : ''}" id="shell">
-      <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <aside class="sidebar" id="sidebar" aria-label="${esc(t('Main navigation'))}">
         <div class="brand">
           <img src="../icons/icon-192.png" alt="">
-          <div><b>LoanDesk</b><small>ADMIN CONSOLE</small></div>
+          <div><b>LoanDesk</b><small>${t('ADMIN CONSOLE')}</small></div>
         </div>
         <nav class="nav" id="nav">
-          <div class="nav-label">Overview</div>
+          <div class="nav-label">${t('Overview')}</div>
           ${navLink(PAGES[0])}
-          <div class="nav-label">Manage</div>
+          <div class="nav-label">${t('Manage')}</div>
           ${PAGES.slice(1, 4).map(navLink).join('')}
-          <div class="nav-label">Compliance</div>
+          <div class="nav-label">${t('Compliance')}</div>
           ${navLink(PAGES[4])}
-          <div class="nav-label">Support</div>
+          <div class="nav-label">${t('Support')}</div>
           ${navLink(PAGES[5])}
         </nav>
-        <div class="sidebar-foot"><b>${esc(user.company.name)}</b><br>Company code ${esc(user.company.code)} · signed in as ${esc(user.code)}<br>Field app: <a href="../" target="_blank" rel="noopener">open</a></div>
+        <div class="sidebar-foot"><b>${esc(user.company.name)}</b><br>${t('Company code {company} · signed in as {user}', { company: esc(user.company.code), user: esc(user.code) })}<br>${t('Field app: {link}', { link: `<a href="../app/" target="_blank" rel="noopener">${t('open')}</a>` })}</div>
       </aside>
       <div class="scrim" id="scrim" hidden></div>
       <div class="main">
         <header class="topbar">
-          <button class="icon-btn menu-btn" id="menu-btn" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">${icon('menu')}</button>
+          <button class="icon-btn menu-btn" id="menu-btn" aria-label="${esc(t('Open navigation'))}" aria-controls="sidebar" aria-expanded="false">${icon('menu')}</button>
           <div class="title" id="page-title"></div>
           <details class="usermenu" id="usermenu">
-            <summary aria-label="Account menu">
+            <summary aria-label="${esc(t('Account menu'))}">
               <span class="avatar">${esc(initials(user.name))}</span>
-              <span class="who"><b>${esc(user.name)}</b><small>${esc(user.code)} · ${esc(user.company.code)} · ${user.support ? 'Support' : 'Administrator'}</small></span>
+              <span class="who"><b>${esc(user.name)}</b><small>${esc(user.code)} · ${esc(user.company.code)} · ${user.support ? t('Support') : t('Administrator')}</small></span>
               ${icon('chevronDown')}
             </summary>
             <div class="menu" role="menu">
-              ${user.support ? '' : `<button type="button" data-menu="password" role="menuitem">${icon('lock')} Change password</button>`}
-              <button type="button" data-menu="help" role="menuitem">${icon('help')} Help &amp; guides</button>
+              ${user.support ? '' : `<button type="button" data-menu="password" role="menuitem">${icon('lock')} ${t('Change password')}</button>`}
+              <button type="button" data-menu="help" role="menuitem">${icon('help')} ${esc(t('Help & guides'))}</button>
+              <div class="menu-lang">${icon('globe')}${langSelect('menu-lang-select', esc(t('Language')))}</div>
               <hr>
-              <button type="button" data-menu="logout" role="menuitem">${icon('logout')} Sign out</button>
+              <button type="button" data-menu="logout" role="menuitem">${icon('logout')} ${t('Sign out')}</button>
             </div>
           </details>
         </header>
@@ -207,6 +220,7 @@ function renderShell() {
   document.getElementById('nav').onclick = (e) => e.target.closest('a') && setNav(false);
 
   const menu = document.getElementById('usermenu');
+  bindLangSelect(menu);
   menu.onclick = async (e) => {
     const action = e.target.closest('[data-menu]')?.dataset.menu;
     if (!action) return;
@@ -215,7 +229,7 @@ function renderShell() {
       clearInterval(supportTimer);
       const wasSupport = Boolean(user.support);
       await logout();
-      renderLogin(wasSupport ? 'Support session ended. You can close this tab.' : 'You have been signed out.');
+      renderLogin(wasSupport ? t('Support session ended. You can close this tab.') : t('You have been signed out.'));
     }
     if (action === 'password') changePassword();
     if (action === 'help') location.hash = '#/help';
@@ -226,25 +240,25 @@ function renderShell() {
 }
 
 function navLink(p) {
-  const badge = p.path === 'dashboard' && pendingDeposits ? `<span class="count" title="Bank deposits awaiting supervisor verification">${pendingDeposits}</span>` : '';
-  return `<a href="#/${p.path}" data-path="${p.path}" ${p.needs ? `data-needs="${p.needs}"` : ''}>${icon(p.icon)}<span>${p.label}</span>${badge}</a>`;
+  const badge = p.path === 'dashboard' && pendingDeposits ? `<span class="count" title="${esc(t('Bank deposits awaiting supervisor verification'))}">${pendingDeposits}</span>` : '';
+  return `<a href="#/${p.path}" data-path="${p.path}" ${p.needs ? `data-needs="${p.needs}"` : ''}>${icon(p.icon)}<span>${esc(t(p.label))}</span>${badge}</a>`;
 }
 
 async function changePassword() {
   await dialog({
-    title: 'Change password',
-    ok: 'Update password',
+    title: t('Change password'),
+    ok: t('Update password'),
     body: `
       <div class="form">
-        <label class="field"><span>Current password</span><input class="input" type="password" name="current" required autocomplete="current-password"></label>
-        <label class="field"><span>New password</span><input class="input" type="password" name="next" required minlength="10" autocomplete="new-password">
-          <span class="hint">At least 10 characters, with letters and numbers.</span></label>
-        <label class="field"><span>Confirm new password</span><input class="input" type="password" name="confirm" required autocomplete="new-password"></label>
+        <label class="field"><span>${t('Current password')}</span><input class="input" type="password" name="current" required autocomplete="current-password"></label>
+        <label class="field"><span>${t('New password')}</span><input class="input" type="password" name="next" required minlength="10" autocomplete="new-password">
+          <span class="hint">${t('At least 10 characters, with letters and numbers.')}</span></label>
+        <label class="field"><span>${t('Confirm new password')}</span><input class="input" type="password" name="confirm" required autocomplete="new-password"></label>
       </div>`,
     onOk: async (data) => {
-      if (data.next !== data.confirm) throw new Error('The new passwords do not match.');
+      if (data.next !== data.confirm) throw new Error(t('The new passwords do not match.'));
       await api('me/password', { method: 'POST', body: { current: data.current, next: data.next } });
-      toast('Password updated');
+      toast(t('Password updated'));
     },
   });
 }
@@ -262,7 +276,7 @@ export async function route() {
       await adoptSupportToken(decodeURIComponent(handover[1]));
     } catch {
       session.clear();
-      return renderLogin('That support link has expired. Start a new support session from the overlord console.');
+      return renderLogin(t('That support link has expired. Start a new support session from the overlord console.'));
     }
     document.getElementById('shell')?.remove();
   }
@@ -290,17 +304,17 @@ export async function route() {
     if (on) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
-  document.getElementById('page-title').textContent = page.label;
-  document.title = `${page.label} · LoanDesk Admin`;
+  document.getElementById('page-title').textContent = t(page.label);
+  document.title = t('{page} · LoanDesk Admin', { page: t(page.label) });
   const el = document.getElementById('view');
   const mySeq = ++seq;
   el.onclick = el.onchange = el.oninput = el.onsubmit = null;
-  el.innerHTML = '<div class="empty">Loading…</div>';
+  el.innerHTML = `<div class="empty">${t('Loading…')}</div>`;
   try {
     await page.view.render(el, new URLSearchParams(queryPart), () => mySeq === seq);
   } catch (err) {
     if (mySeq !== seq || err.status === 401) return;
-    el.innerHTML = `<div class="card"><div class="empty">${icon('alert')}<b>Couldn't load this page</b>${esc(err.message)}<div style="margin-top:14px"><button class="btn" id="retry">${icon('refresh')} Try again</button></div></div></div>`;
+    el.innerHTML = `<div class="card"><div class="empty">${icon('alert')}<b>${t(`Couldn't load this page`)}</b>${esc(tr(err.message))}<div style="margin-top:14px"><button class="btn" id="retry">${icon('refresh')} ${t('Try again')}</button></div></div></div>`;
     document.getElementById('retry').onclick = () => route();
   }
 }
@@ -324,7 +338,7 @@ export function setPendingBadge(n) {
   document.querySelector('#nav a[data-path=dashboard]')?.classList.toggle('active', location.hash.startsWith('#/dashboard'));
 }
 
-setExpiredHandler(() => renderLogin('Your session has expired. Please sign in again.'));
+setExpiredHandler(() => renderLogin(t('Your session has expired. Please sign in again.')));
 window.addEventListener('hashchange', route);
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.getElementById('drawer').classList.contains('open')) closeDrawer();
@@ -333,4 +347,15 @@ document.getElementById('drawer-scrim').onclick = closeDrawer;
 document.getElementById('drawer').addEventListener('click', (e) => {
   if (e.target.closest('[data-close]')) closeDrawer();
 });
+
+// Language: re-render everything in the new language (the shell, or the sign-in screen).
+window.addEventListener('langchange', async () => {
+  await loadHelpLang(getLang());
+  if (!session.get()) return renderLogin(loginMessage);
+  document.getElementById('shell')?.remove();
+  route();
+});
+
+await loadLang();
+await loadHelpLang(getLang());
 route();

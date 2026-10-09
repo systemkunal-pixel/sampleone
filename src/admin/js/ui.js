@@ -1,4 +1,6 @@
 // Shared admin UI helpers: formatting, icons, toasts, drawer, dialogs.
+// Also used by the overlord console, which never loads a language, so t() returns the English there.
+import { t, tr } from '../../i18n/i18n.js';
 
 export const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -30,20 +32,21 @@ export function dateTime(ts) {
 
 /** "3 min ago", "yesterday", or a date. Timestamps are server-local (same zone as the browser for Indian deployments). */
 export function ago(ts) {
-  if (!ts) return 'Never';
-  const t = new Date(String(ts).replace(' ', 'T')).getTime();
-  const s = Math.round((Date.now() - t) / 1000);
-  if (s < 60) return 'Just now';
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  if (s < 172800) return 'Yesterday';
-  if (s < 7 * 86400) return `${Math.round(s / 86400)} days ago`;
+  if (!ts) return t('Never');
+  const at = new Date(String(ts).replace(' ', 'T')).getTime();
+  const s = Math.round((Date.now() - at) / 1000);
+  if (s < 60) return t('Just now');
+  if (s < 3600) return t('{n} min ago', { n: Math.round(s / 60) });
+  if (s < 86400) return t('{n} h ago', { n: Math.round(s / 3600) });
+  if (s < 172800) return t('Yesterday');
+  if (s < 7 * 86400) return t('{n} days ago', { n: Math.round(s / 86400) });
   return date(ts);
 }
 
 export const initials = (name) =>
   String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join('');
 
+/** English-only "3 loans" (used by the overlord console). Translatable pages use full keys instead. */
 export const plural = (n, w, p = `${w}s`) => `${num(n)} ${n === 1 ? w : p}`;
 
 // ---------- icons (24×24 stroke paths) ----------
@@ -86,6 +89,7 @@ const PATHS = {
   layers: '<path d="m12 2 10 5-10 5L2 7Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
   book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5Z"/><path d="M4 19.5V21h16"/>',
   enter: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"/>',
   archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
 };
 
@@ -94,17 +98,20 @@ export const icon = (name, cls = '') =>
 
 // ---------- badges ----------
 
+/* i18n: t('Admin') t('Supervisor') t('Field officer') */
 const ROLE = { admin: ['Admin', 'info'], supervisor: ['Supervisor', 'brand'], officer: ['Field officer', ''] };
-export const roleBadge = (r) => `<span class="badge ${ROLE[r]?.[1] || ''}">${ROLE[r]?.[0] || esc(r)}</span>`;
+export const roleBadge = (r) => `<span class="badge ${ROLE[r]?.[1] || ''}">${ROLE[r] ? esc(t(ROLE[r][0])) : esc(r)}</span>`;
 export const statusBadge = (active) =>
-  active ? '<span class="badge ok"><span class="dot"></span>Active</span>' : '<span class="badge"><span class="dot"></span>Inactive</span>';
+  active ? `<span class="badge ok"><span class="dot"></span>${esc(t('Active'))}</span>` : `<span class="badge"><span class="dot"></span>${esc(t('Inactive'))}</span>`;
 
+/* Labels are translated where shown: t(label).
+   i18n: t('Current') t('1–30 DPD') t('31–60 DPD') t('61–90 DPD') t('90+ DPD') */
 export const BUCKETS = [
   ['current', 'Current'], ['1-30', '1–30 DPD'], ['31-60', '31–60 DPD'], ['61-90', '61–90 DPD'], ['90+', '90+ DPD'],
 ];
 export function ageBadge(bucket, dpd) {
-  if (bucket === 'closed') return '<span class="age"><i class="a-closed"></i>Closed</span>';
-  return `<span class="age"><i class="a-${esc(bucket)}"></i>${dpd > 0 ? `${dpd} DPD` : 'Current'}</span>`;
+  if (bucket === 'closed') return `<span class="age"><i class="a-closed"></i>${esc(t('Closed'))}</span>`;
+  return `<span class="age"><i class="a-${esc(bucket)}"></i>${esc(dpd > 0 ? t('{n} DPD', { n: dpd }) : t('Current'))}</span>`;
 }
 
 // ---------- toasts ----------
@@ -153,7 +160,7 @@ export function closeDrawer() {
 export const drawerHead = (title, sub = '') => `
   <div class="drawer-head">
     <div class="grow"><h2>${title}</h2>${sub ? `<div class="muted small">${sub}</div>` : ''}</div>
-    <button class="icon-btn" data-close aria-label="Close">${icon('x')}</button>
+    <button class="icon-btn" data-close aria-label="${esc(t('Close'))}">${icon('x')}</button>
   </div>`;
 
 // ---------- dialogs ----------
@@ -162,7 +169,7 @@ export const drawerHead = (title, sub = '') => `
  * Shows a modal dialog. `body` may contain a form; resolves with the clicked button's value
  * (and the form data for 'ok'), or null when dismissed.
  */
-export function dialog({ title, body = '', ok = 'OK', cancel = 'Cancel', danger = false, onOk }) {
+export function dialog({ title, body = '', ok = t('OK'), cancel = t('Cancel'), danger = false, onOk }) {
   const dlg = document.getElementById('dlg');
   dlg.innerHTML = `
     <form method="dialog">
@@ -188,7 +195,7 @@ export function dialog({ title, body = '', ok = 'OK', cancel = 'Cancel', danger 
           resolve(result ?? {});
         }
       } catch (err) {
-        form.querySelector('[data-err]').textContent = err.message;
+        form.querySelector('[data-err]').textContent = tr(err.message);
       } finally {
         btn.disabled = false;
       }
@@ -206,7 +213,7 @@ export function dialog({ title, body = '', ok = 'OK', cancel = 'Cancel', danger 
   });
 }
 
-export const confirmDialog = (title, message, ok = 'Confirm', danger = false) =>
+export const confirmDialog = (title, message, ok = t('Confirm'), danger = false) =>
   dialog({ title, body: `<p>${message}</p>`, ok, danger }).then(Boolean);
 
 /** Random 6-digit PIN, or a 12-character password with letters and digits for admins. */
@@ -222,23 +229,34 @@ export function generateSecret(kind = 'pin') {
 }
 
 /** Small "Help" button that opens a guide in the Help & guides page. */
-export const helpButton = (topic, label = 'Help') =>
-  `<a class="btn ghost" href="#/help?topic=${encodeURIComponent(topic)}" title="Open the guide for this page">${icon('help')} ${label}</a>`;
+export const helpButton = (topic, label = t('Help')) =>
+  `<a class="btn ghost" href="#/help?topic=${encodeURIComponent(topic)}" title="${esc(t('Open the guide for this page'))}">${icon('help')} ${label}</a>`;
 
 export function emptyState(title, text, iconName = 'search') {
   return `<div class="empty">${icon(iconName)}<b>${title}</b>${text}</div>`;
 }
 
+// Whole-sentence keys for the pager count, by label.
+const PAGER_COUNT = {
+  rows: (one, v) => (one ? t('{from}–{to} of 1 row', v) : t('{from}–{to} of {n} rows', v)),
+  loans: (one, v) => (one ? t('{from}–{to} of 1 loan', v) : t('{from}–{to} of {n} loans', v)),
+  entries: (one, v) => (one ? t('{from}–{to} of 1 entry', v) : t('{from}–{to} of {n} entries', v)),
+  sessions: (one, v) => (one ? t('{from}–{to} of 1 session', v) : t('{from}–{to} of {n} sessions', v)),
+};
+
 export function pager({ page, pages, total, pageSize }, label = 'rows') {
   const from = total ? (page - 1) * pageSize + 1 : 0;
   const to = Math.min(total, page * pageSize);
+  const count = PAGER_COUNT[label]
+    ? PAGER_COUNT[label](total === 1, { from: num(from), to: num(to), n: num(total) })
+    : `${num(from)}–${num(to)} of ${plural(total, label.replace(/s$/, ''), label)}`;
   return `
     <div class="table-foot">
-      <span>${num(from)}–${num(to)} of ${plural(total, label.replace(/s$/, ''), label)}</span>
+      <span>${count}</span>
       <div class="pager">
-        <button class="icon-btn" data-page="${page - 1}" ${page <= 1 ? 'disabled' : ''} aria-label="Previous page">${icon('chevronLeft')}</button>
-        <span>Page ${page} of ${pages}</span>
-        <button class="icon-btn" data-page="${page + 1}" ${page >= pages ? 'disabled' : ''} aria-label="Next page">${icon('chevronRight')}</button>
+        <button class="icon-btn" data-page="${page - 1}" ${page <= 1 ? 'disabled' : ''} aria-label="${esc(t('Previous page'))}">${icon('chevronLeft')}</button>
+        <span>${t('Page {page} of {pages}', { page, pages })}</span>
+        <button class="icon-btn" data-page="${page + 1}" ${page >= pages ? 'disabled' : ''} aria-label="${esc(t('Next page'))}">${icon('chevronRight')}</button>
       </div>
     </div>`;
 }
