@@ -9,7 +9,7 @@ import * as install from './install.js';
 import * as supervisor from './supervisor.js';
 import { viewHelp, viewHelpTopic, setHelpQuery } from './help.js';
 import { loadHelpLang } from '../help/content.js';
-import { t, tr, loadLang, setLang, getLang, langSelect } from '../i18n/i18n.js';
+import { t, tr, loadLang, getLang, langSelect } from '../i18n/i18n.js';
 import {
   esc, plural, toast, fmtDate, fmtTime, fmtWhen, netPill, header, verificationTag, decisionLine,
   trackUrl, revokeSlipUrls, hydrateSlips, viewNotFound,
@@ -823,10 +823,6 @@ document.addEventListener('input', (e) => {
 
 document.addEventListener('change', (e) => {
   const el = e.target;
-  if (el.matches?.('[data-lang-select]')) {
-    setLang(el.value);
-    return;
-  }
   if (el.form?.id === 'pay-form') document.getElementById('pay-error').textContent = '';
   if (el.name === 'mode' && el.form?.id === 'pay-form') {
     document.getElementById('ref-wrap').hidden = el.value === 'Cash' || el.value === BANK_DEPOSIT;

@@ -90,14 +90,26 @@ export function tr(message) {
   return msg;
 }
 
-/** A <select> for choosing the language; wire it with bindLangSelect(). */
-export const langSelect = (cls = '', label = 'Language') => `
-  <label class="lang-select ${cls}"><span class="sr-only">${label}</span>
-    <select data-lang-select aria-label="${label}">${LANGS.map((l) => `<option value="${l.code}" ${l.code === lang ? 'selected' : ''}>${l.native}</option>`).join('')}</select>
-  </label>`;
+// The language toggle, in the order users asked for: Hindi · Bangla · English.
+const TOGGLE = [
+  { code: 'hi', label: 'हिन्दी' },
+  { code: 'bn', label: 'বাংলা' },
+  { code: 'en', label: 'English' },
+];
 
-export function bindLangSelect(root = document) {
-  root.querySelectorAll('[data-lang-select]').forEach((s) => {
-    s.onchange = () => setLang(s.value);
+/** A segmented toggle for choosing the language. Clicks are handled once for the whole page below. */
+export const langSelect = (cls = '', label = 'Language') => `
+  <div class="lang-toggle ${cls}" role="group" aria-label="${label}">${TOGGLE.map((l) =>
+    `<button type="button" data-lang="${l.code}" lang="${l.code}" aria-pressed="${l.code === lang}">${l.label}</button>`).join('')}</div>`;
+
+/** Kept for callers written for the old dropdown: the toggle needs no binding. */
+export function bindLangSelect() {}
+
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest?.('[data-lang]');
+    if (!b) return;
+    e.preventDefault();
+    if (b.dataset.lang !== lang) setLang(b.dataset.lang);
   });
 }

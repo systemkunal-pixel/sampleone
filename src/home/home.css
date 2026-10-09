@@ -41,8 +41,10 @@ h1, h2, h3 { font-family: var(--display); margin: 0; letter-spacing: -.01em; }
 .logo b { font: 800 1.2rem var(--display); }
 .logo small { color: rgb(255 255 255 / .7); font-size: .78rem; margin-top: 4px; }
 .top-nav { display: flex; align-items: center; gap: 14px; }
-.lang-select select { appearance: none; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23fff' fill='none' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center; color: #fff; border: 1px solid rgb(255 255 255 / .3); border-radius: 10px; padding: 8px 30px 8px 12px; font: 600 .92rem var(--text); cursor: pointer; }
-.lang-select option { color: var(--ink); }
+.lang-toggle { display: inline-flex; padding: 3px; gap: 2px; border: 1px solid rgb(255 255 255 / .3); border-radius: 99px; }
+.lang-toggle button { border: 0; background: none; color: rgb(255 255 255 / .85); font: 600 .9rem var(--text); padding: 6px 12px; border-radius: 99px; cursor: pointer; }
+.lang-toggle button:hover { color: #fff; }
+.lang-toggle button[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); }
 .signin { position: relative; }
 .signin summary { list-style: none; cursor: pointer; font-weight: 600; padding: 8px 6px; }
 .signin summary::-webkit-details-marker { display: none; }
@@ -142,6 +144,8 @@ h1, h2, h3 { font-family: var(--display); margin: 0; letter-spacing: -.01em; }
   .wrap { width: calc(100% - 32px); }
   .top-row { min-height: 60px; }
   .logo small, .top-nav .btn { display: none; }
+  .lang-toggle button { padding: 5px 8px; font-size: .8rem; }
+  .signin summary { font-size: .9rem; }
   .top-nav { gap: 8px; }
   .hero { padding: 44px 0 60px; }
   .cta-row .btn { flex: 1 1 100%; }
