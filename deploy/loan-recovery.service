@@ -10,7 +10,7 @@ Wants=mariadb.service
 Type=simple
 User=recovery
 WorkingDirectory=/opt/loan-recovery
-ExecStart=/usr/bin/node server/index.js
+ExecStart=/usr/bin/node server/supervisor.js
 Environment=NODE_ENV=production
 # Settings come from /opt/loan-recovery/.env (DB_*, PORT, TZ …)
 Restart=always

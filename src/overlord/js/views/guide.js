@@ -46,6 +46,14 @@ export async function render(el) {
         (a trial, a special deal) and survives plan changes. When a feature is off, its menu items disappear for that company and the
         server refuses it.</p>
 
+      <h2>Updating LoanDesk</h2>
+      <ol>
+        <li>On the release PC (once): <code>node scripts/patch.js keygen</code>, then put the printed <code>UPDATE_PUBLIC_KEY=…</code> line in the server's <code>.env</code> and restart LoanDesk.</li>
+        <li>For each release: raise the version in <code>package.json</code>, run <code>node scripts/patch.js build</code>.</li>
+        <li><b>Update &amp; diagnostics</b> → choose the <code>.ldpatch</code> → <b>Verify</b> → <b>Stage</b> (type the version). The updater agent backs up, installs and checks the new version; if it isn't healthy it puts the old one back by itself.</li>
+      </ol>
+      <p>Prefer a quiet time: the site is offline for about a minute. Phones keep working offline and send their records afterwards.</p>
+
       <h2>Accountability</h2>
       <ul>
         <li><b>Support sessions</b> — every entry: who, which company, reason, start, end, IP and what was changed.</li>

@@ -83,7 +83,7 @@ function Test-PortFree([int]$Number, [string]$BindAddress) {
 function Stop-AppServer {
   Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
-    Where-Object { $_.CommandLine -like '*server\index.js*' -or $_.CommandLine -like '*server/index.js*' } |
+    Where-Object { $_.CommandLine -match 'server[\\/](index|supervisor)\.js' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Sleep -Seconds 1
 }
@@ -339,6 +339,12 @@ if (Test-Path $envFile) {
   if ($m -and $m.Matches[0].Groups[1].Value -ne 'change-me') { $DbPass = $m.Matches[0].Groups[1].Value }
 }
 if (-not $DbPass) { $DbPass = New-Secret 28 }
+# The update signing key (public half) is kept across re-installs.
+$UpdateKey = ''
+if (Test-Path $envFile) {
+  $m = Select-String -Path $envFile -Pattern '^UPDATE_PUBLIC_KEY=(\S+)' | Select-Object -First 1
+  if ($m) { $UpdateKey = $m.Matches[0].Groups[1].Value }
+}
 
 Step "Creating database '$DbName' and user '$DbUser'"
 $grant = ''
@@ -381,6 +387,11 @@ DB_NAME=$DbName
 DB_USER=$DbUser
 DB_PASSWORD=$DbPass
 DB_POOL_SIZE=10
+# Folder with mariadb-dump.exe, used by the updater agent to back up the database before an update.
+DB_BIN_DIR=$(Split-Path -Parent $DbClient)
+
+# Public key that signed update packages must match (from: node scripts/patch.js keygen on the release PC).
+UPDATE_PUBLIC_KEY=$UpdateKey
 "@
 Protect-File $envFile
 
@@ -456,7 +467,7 @@ Stop-AppServer
 
 $log = Join-Path $AppDir 'logs\server.log'
 $action = New-ScheduledTaskAction -Execute 'cmd.exe' -WorkingDirectory $AppDir `
-  -Argument "/c `"`"$Node`" server\index.js >> `"$log`" 2>&1`""
+  -Argument "/c `"`"$Node`" server\supervisor.js >> `"$log`" 2>&1`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $trigger.Delay = 'PT30S'   # give MariaDB time to start after a reboot
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `

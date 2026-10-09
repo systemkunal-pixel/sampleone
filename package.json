@@ -1,12 +1,14 @@
 {
   "name": "loandesk",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "LoanDesk - loan recovery app for field officers, with supervisor verification and admin console (PWA + Node + MariaDB)",
   "type": "module",
   "private": true,
   "scripts": {
     "start": "node server/index.js",
     "admin": "node server/admin.js",
+    "agent": "node server/supervisor.js",
+    "patch": "node scripts/patch.js",
     "test": "node --test --test-concurrency=1 tests/*.test.js"
   },
   "engines": {

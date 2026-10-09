@@ -110,6 +110,8 @@ if [[ -f "$APP_DIR/.env" ]]; then
   DB_PASS="$(grep -E '^DB_PASSWORD=' "$APP_DIR/.env" | head -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*$//')"
 fi
 [[ -n "$DB_PASS" && "$DB_PASS" != "change-me" ]] || DB_PASS="$(rand 28)"
+# The update signing key (public half) is kept across re-installs.
+UPDATE_KEY="$( [[ -f "$APP_DIR/.env" ]] && grep -E '^UPDATE_PUBLIC_KEY=' "$APP_DIR/.env" | head -1 | cut -d= -f2- || true)"
 
 say "Creating database '$DB_NAME' and user '$DB_USER'"
 mariadb <<SQL
@@ -133,6 +135,9 @@ DB_NAME=$DB_NAME
 DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASS
 DB_POOL_SIZE=10
+
+# Public key that signed update packages must match (from: node scripts/patch.js keygen on the release PC).
+UPDATE_PUBLIC_KEY=$UPDATE_KEY
 ENV
 chown "$APP_USER:$APP_USER" "$APP_DIR/.env"
 chmod 600 "$APP_DIR/.env"
@@ -193,7 +198,7 @@ Wants=mariadb.service
 Type=simple
 User=$APP_USER
 WorkingDirectory=$APP_DIR
-ExecStart=$NODE_BIN server/index.js
+ExecStart=$NODE_BIN server/supervisor.js
 Environment=NODE_ENV=production
 Restart=always
 RestartSec=3
@@ -211,10 +216,10 @@ UNIT
   systemctl restart loan-recovery
 else
   warn "systemd not available — starting the server in the background (it won't restart after a reboot)."
-  pkill -u "$APP_USER" -f "server/index.js" 2>/dev/null || true
+  pkill -u "$APP_USER" -f "server/(index|supervisor).js" 2>/dev/null || true
   sleep 1
   # Redirect the whole group so no process keeps this script's stdout open.
-  (cd "$APP_DIR" && exec nohup runuser -u "$APP_USER" -- "$NODE_BIN" server/index.js) >"$APP_DIR/server.log" 2>&1 </dev/null &
+  (cd "$APP_DIR" && exec nohup runuser -u "$APP_USER" -- "$NODE_BIN" server/supervisor.js) >"$APP_DIR/server.log" 2>&1 </dev/null &
   disown
 fi
 

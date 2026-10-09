@@ -125,6 +125,27 @@ npm run admin -- list-overlords
 npm run admin -- list-companies
 ```
 
+## Updates from the overlord console
+
+**Update & diagnostics** in the overlord console shows:
+- what the server runs: version, deploy time, database, Node.js, server time and free disk;
+- whether the updater agent is alive and whether a signing key is set;
+- whether field staff are working right now.
+
+It also installs signed update packages (`.ldpatch`):
+
+1. **Once, on the release PC:** run `node scripts/patch.js keygen`. This saves your private signing key to `~/.loandesk/update-signing-key.pem` (on Windows, `%USERPROFILE%\.loandesk\`) and prints a line `UPDATE_PUBLIC_KEY=…`. Add that line to each server's `.env` and restart LoanDesk; re-running the installer keeps it. Keep the private key off servers and out of git, and back it up.
+2. **For each release:** raise `version` in `package.json`, then run `node scripts/patch.js build --notes "what changed"`. This writes `loandesk-<version>.ldpatch`, a complete signed copy of the app code. It contains no `.env` and no data.
+3. **In the console:** choose the file, then **Verify**. Verify checks the signature, that the package is LoanDesk and newer than the running version, every file's checksum, and safe file paths. Nothing is installed yet.
+4. **Stage**, typing the version to confirm. Within 10 seconds the **updater agent** takes over:
+   - it backs up the code, and the whole database if the update changes the schema;
+   - it stops the site for about a minute, installs the new files (running `npm ci` if dependencies changed) and starts the new version;
+   - if the new version doesn't report healthy, it **rolls back** files, dependencies and database to the old version. A build that keeps crashing is caught within seconds.
+
+The last five backups are kept in `backups/`. **History** and **Activity** record every verify, stage and cancel (refusals included) and each agent step.
+
+The installers now run `server/supervisor.js` (the updater agent) instead of `server/index.js`. It keeps the web server running and restarts it if it stops. Changes to the agent itself take effect the next time the service restarts (e.g. after re-running the installer). On Windows the installer sets `DB_BIN_DIR` so the agent can find `mariadb-dump`.
+
 ## Brand assets
 
 - `src/icons/icon.svg`: the app icon (LD monogram) as SVG. PNG sizes for phones are alongside it.
@@ -252,6 +273,10 @@ server/
   records.js          officer record intake  auth.js       PINs, sessions, throttling
   overlord-api.js     overlord endpoints     plans.js      plan matrix and feature checks
   totp.js             authenticator codes (RFC 6238)
+  supervisor.js       updater agent: runs the server, applies staged updates
+  updater.js patch.js update packages: build, verify, apply, roll back
+  updates-api.js      Update & diagnostics endpoints
+scripts/patch.js      release tool: keygen, build, verify
   db.js schema.sql    MariaDB                admin.js      admin command-line tool
 deploy/               nginx, Caddy and systemd files
 tests/                node:test suites

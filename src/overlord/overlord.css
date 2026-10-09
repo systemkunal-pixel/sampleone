@@ -35,6 +35,11 @@ body.overlord { --brand: #0a3a24; --brand-hover: #082d1c; --brand-soft: #e3efe8;
 .code-input { font: 600 1.4rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .4em; text-align: center; }
 .steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: .9rem; color: var(--text-2); }
 
+/* update upload */
+.drop { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 22px 16px; border: 1.5px dashed var(--border-strong); border-radius: var(--radius); text-align: center; cursor: pointer; background: var(--surface-2); }
+.drop:hover, .drop.over { border-color: var(--brand); background: var(--brand-soft); }
+.drop .icon { width: 26px; height: 26px; color: var(--muted); }
+
 /* plan matrix */
 .matrix th, .matrix td { text-align: center; }
 .matrix th:first-child, .matrix td:first-child { text-align: left; }

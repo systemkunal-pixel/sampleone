@@ -45,7 +45,8 @@ before(async () => {
     user: env.TEST_DB_USER, password: env.TEST_DB_PASSWORD || '', database: env.TEST_DB_NAME, connectionLimit: 5,
   });
   for (const t of ['imports', 'audit_log', 'deposit_slips', 'visits', 'payments', 'sessions', 'loans', 'users', 'companies',
-    'overlord_sessions', 'overlords', 'support_sessions', 'overlord_audit', 'plans', 'plan_features', 'company_feature_overrides']) {
+    'overlord_sessions', 'overlords', 'support_sessions', 'overlord_audit', 'plans', 'plan_features', 'company_feature_overrides',
+    'platform_updates', 'platform_update_events', 'platform_state']) {
     await pool.query(`DROP TABLE IF EXISTS ${t}`);
   }
   await migrate(pool);

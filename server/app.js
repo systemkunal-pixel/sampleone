@@ -5,6 +5,7 @@ import { isoDate, lastReceiptSeq } from '../src/js/logic.js';
 import { createSession, userForToken, deleteSession, verifyPin, LoginThrottle } from './auth.js';
 import { companyEntitlements } from './plans.js';
 import { mountOverlord } from './overlord-api.js';
+import { VERSION } from './version.js';
 import { loadLoans, paymentFromRow, withTx, audit, now } from './db.js';
 import { acceptRecord, MAX_SLIP_BYTES } from './records.js';
 import { HttpError, send, readJson, Router } from './http.js';
@@ -49,7 +50,7 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR }) {
 
   router.add('GET', '/api/health', async () => {
     await pool.query('SELECT 1');
-    return { ok: true, time: now() };
+    return { ok: true, version: VERSION, time: now() };
   });
 
   /**

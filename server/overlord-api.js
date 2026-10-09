@@ -13,6 +13,7 @@ import { HttpError } from './http.js';
 import { newSecret, verifyCode, otpauthUrl } from './totp.js';
 import { PLANS, PLAN_CODES, FEATURES, FEATURE_KEYS, planMatrix, planLimits, companyEntitlements } from './plans.js';
 import { addUser, seedDemo, addOverlord, DEMO_LOGINS } from './admin.js';
+import { registerUpdateRoutes } from './updates-api.js';
 
 const TICKET_MINUTES = 5; // between the password step and the authenticator code
 const IDLE_MINUTES = 60; // overlord sessions slide on use…
@@ -149,6 +150,7 @@ export function mountOverlord(router, { pool, readJson }) {
 
   const R = (method, path, fn) => router.add(method, `/api/overlord${path}`, async (req, res, params, query) =>
     fn({ req, res, params, query, ctx: await authed(req) }));
+  registerUpdateRoutes(R, { pool, readJson });
   const open = (method, path, fn) => router.add(method, `/api/overlord${path}`, (req, res, params, query) => fn({ req, res, params, query }));
 
   // ----- sign-in: password, then authenticator code -----

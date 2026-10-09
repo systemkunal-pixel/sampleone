@@ -251,4 +251,43 @@ CREATE TABLE IF NOT EXISTS company_feature_overrides (
   feature     VARCHAR(40)  NOT NULL,
   enabled     TINYINT(1)   NOT NULL,
   PRIMARY KEY (company_id, feature)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- v4: signed updates. The updater agent (server/supervisor.js) applies packages staged in the overlord console.
+CREATE TABLE IF NOT EXISTS platform_updates (
+  id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  from_version    VARCHAR(20)  NOT NULL,
+  to_version      VARCHAR(20)  NOT NULL,
+  file_name       VARCHAR(200) NOT NULL,
+  sha256          CHAR(64)     NOT NULL,
+  size            INT UNSIGNED NOT NULL,
+  schema_changes  TINYINT(1)   NOT NULL DEFAULT 0,
+  staged_by       VARCHAR(190) NOT NULL,
+  staged_at       DATETIME     NOT NULL,
+  status          ENUM('staged', 'applying', 'applied', 'rolled_back', 'failed', 'cancelled') NOT NULL,
+  started_at      DATETIME     NULL,
+  finished_at     DATETIME     NULL,
+  detail          TEXT         NULL,
+  KEY ix_platform_updates_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Every verify, stage and cancel (refusals included) and each step the agent takes.
+CREATE TABLE IF NOT EXISTS platform_update_events (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  at         DATETIME     NOT NULL,
+  actor      VARCHAR(190) NOT NULL,
+  action     VARCHAR(20)  NOT NULL,
+  outcome    VARCHAR(20)  NOT NULL,
+  file_name  VARCHAR(200) NULL,
+  size       INT UNSIGNED NULL,
+  update_id  INT UNSIGNED NULL,
+  detail     TEXT         NULL,
+  KEY ix_update_events_at (at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Small facts about this installation: the agent's heartbeat and the last deploy time.
+CREATE TABLE IF NOT EXISTS platform_state (
+  k           VARCHAR(40)  NOT NULL PRIMARY KEY,
+  v           TEXT         NULL,
+  updated_at  DATETIME     NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

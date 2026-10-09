@@ -47,7 +47,8 @@ before(async () => {
     user: env.TEST_DB_USER, password: env.TEST_DB_PASSWORD || '', database: env.TEST_DB_NAME, connectionLimit: 5,
   });
   for (const t of ['imports', 'audit_log', 'deposit_slips', 'visits', 'payments', 'sessions', 'loans', 'users', 'companies',
-    'overlord_sessions', 'overlords', 'support_sessions', 'overlord_audit', 'plans', 'plan_features', 'company_feature_overrides']) {
+    'overlord_sessions', 'overlords', 'support_sessions', 'overlord_audit', 'plans', 'plan_features', 'company_feature_overrides',
+    'platform_updates', 'platform_update_events', 'platform_state']) {
     await pool.query(`DROP TABLE IF EXISTS ${t}`);
   }
   await migrate(pool);
@@ -271,4 +272,41 @@ test('overlord accounts and the overlord audit trail', opts, async () => {
   assert.equal(lock.companyCode, 'ACME');
   assert.equal(lock.detail.reason, 'Invoice unpaid');
   assert.equal(lock.who, OVERLORD.email);
+});
+
+test('signed updates: verify needs the release key, stage needs the typed version, and both are logged', opts, async () => {
+  const { generateSigningKeys, buildPatch } = await import('../server/patch.js');
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join, dirname } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'ld-rel-'));
+  for (const [p, body] of Object.entries({ 'package.json': '{"version":"99.0.0"}', 'server/index.js': '//', 'server/schema.sql': '' })) {
+    mkdirSync(dirname(join(root, p)), { recursive: true });
+    writeFileSync(join(root, p), body);
+  }
+  const keys = generateSigningKeys();
+  const pkg = buildPatch(root, keys.privatePem).toString('base64');
+
+  delete process.env.UPDATE_PUBLIC_KEY;
+  const noKey = await O('/updates/verify', { method: 'POST', body: { fileName: 'x.ldpatch', base64: pkg } });
+  assert.equal(noKey.status, 400);
+  assert.match(noKey.body.error, /signing key/);
+
+  process.env.UPDATE_PUBLIC_KEY = generateSigningKeys().publicKey; // someone else's key
+  assert.match((await O('/updates/verify', { method: 'POST', body: { fileName: 'x.ldpatch', base64: pkg } })).body.error, /Signature/);
+
+  process.env.UPDATE_PUBLIC_KEY = keys.publicKey;
+  const ok = await O('/updates/verify', { method: 'POST', body: { fileName: 'loandesk-99.0.0.ldpatch', base64: pkg } });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.summary.version, '99.0.0');
+  assert.equal((await O('/updates/stage', { method: 'POST', body: { sha256: ok.body.sha256, confirm: '1.0' } })).status, 400);
+  const staged = await O('/updates/stage', { method: 'POST', body: { sha256: ok.body.sha256, fileName: ok.body.fileName, confirm: '99.0.0' } });
+  assert.equal(staged.status, 200);
+  assert.equal((await O('/updates/stage', { method: 'POST', body: { sha256: ok.body.sha256, confirm: '99.0.0' } })).status, 409, 'one at a time');
+  const page = (await O('/updates')).body;
+  assert.equal(page.active.to_version, '99.0.0');
+  assert.equal(page.diagnostics.signingKey.configured, true);
+  assert.deepEqual(page.events.slice(0, 5).map((e) => `${e.action}:${e.outcome}`), ['stage:refused', 'stage:ok', 'stage:refused', 'verify:ok', 'verify:refused']);
+  assert.equal((await O(`/updates/${staged.body.id}/cancel`, { method: 'POST' })).status, 200);
+  delete process.env.UPDATE_PUBLIC_KEY;
 });
