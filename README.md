@@ -1,3 +1,5 @@
+<p align="center"><img src="src/icons/logo-lockup.svg" alt="LoanDesk" width="420"></p>
+
 # LoanDesk
 
 **LoanDesk** is a loan recovery app for field collection teams. It is planned to run at `https://loandesk.datahaat.com`. Internal names, such as the `loan_recovery` database, the `loan-recovery` service and the `/opt/loan-recovery` / `C:\LoanRecovery` folders, keep their original spelling so existing installs keep working.
@@ -77,6 +79,12 @@ powershell -ExecutionPolicy Bypass -File C:\src\sampleone\scripts\install.ps1 -D
   - export the list to CSV.
 - **Import loans:** upload Excel (.xlsx), CSV or JSON, then review the result before anything is saved (new or updated loans, warnings, and errors with row numbers), download an error report, and confirm. Import history is kept, and a downloadable Excel template is included.
 - **Audit log:** every sign-in (and failed attempt), user change, PIN reset, import, reassignment and deposit decision.
+
+## Brand assets
+
+- `src/icons/icon.svg`: the app icon (LD monogram) as SVG. PNG sizes for phones are alongside it.
+- `src/icons/logo-lockup.svg` and `logo-lockup-dark.svg`: the logo with the name, for light and dark backgrounds.
+- Colours: green `#0f5132` (gradient `#17804f` → `#0a3a24`), gold `#F5B82E`, ink `#15201b`.
 
 ## Help & guides inside the app
 
