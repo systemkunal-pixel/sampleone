@@ -78,6 +78,7 @@ const PATHS = {
   phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/>',
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   dice: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 8h.01M16 8h.01M12 12h.01M8 16h.01M16 16h.01"/>',
 };
 
@@ -212,6 +213,10 @@ export function generateSecret(kind = 'pin') {
   for (let i = 0; i < 3; i++) s += digits[rand(digits.length)];
   return s;
 }
+
+/** Small "Help" button that opens a guide in the Help & guides page. */
+export const helpButton = (topic, label = 'Help') =>
+  `<a class="btn ghost" href="#/help?topic=${encodeURIComponent(topic)}" title="Open the guide for this page">${icon('help')} ${label}</a>`;
 
 export function emptyState(title, text, iconName = 'search') {
   return `<div class="empty">${icon(iconName)}<b>${title}</b>${text}</div>`;

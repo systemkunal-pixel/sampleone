@@ -48,7 +48,7 @@ export async function viewDeposits(status = 'pending') {
   }
   const total = list.reduce((s, d) => s + d.amount, 0);
   return `
-    ${header('Bank deposits')}
+    ${header('Bank deposits', '', 'verify-deposit')}
     <div class="chips tabs">${STATUSES.map(([s, label]) =>
       `<a class="chip ${s === status ? 'active' : ''}" href="#/deposits/${s}">${label}</a>`).join('')}</div>
     ${error ? `<p class="note bad mt-s">${esc(error)}</p>` : ''}
@@ -82,7 +82,7 @@ export async function viewDeposit(id) {
   const flags = checks(d);
   const pending = d.deposit.verification === 'pending';
   return `
-    ${header('Verify deposit', `#/deposits/${d.deposit.verification}`)}
+    ${header('Verify deposit', `#/deposits/${d.deposit.verification}`, 'verify-deposit')}
     <section class="card">
       <div class="row between"><strong>${esc(d.borrower)}</strong>${verificationTag(d.deposit)}</div>
       <div class="muted small">${esc(d.loanNo)}${st ? ` · overdue ${formatINR(st.overdue)} · outstanding ${formatINR(st.outstanding)}` : ''}</div>

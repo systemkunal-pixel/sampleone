@@ -5,6 +5,7 @@ import * as users from './views/users.js';
 import * as loans from './views/loans.js';
 import * as importer from './views/import.js';
 import * as audit from './views/audit.js';
+import * as help from './views/help.js';
 
 const $root = document.getElementById('root');
 
@@ -14,6 +15,7 @@ const PAGES = [
   { path: 'loans', label: 'Loans', icon: 'loans', view: loans },
   { path: 'import', label: 'Import loans', icon: 'upload', view: importer },
   { path: 'audit', label: 'Audit log', icon: 'audit', view: audit },
+  { path: 'help', label: 'Help & guides', icon: 'help', view: help },
 ];
 
 // ---------- login ----------
@@ -105,6 +107,8 @@ function renderShell() {
           ${PAGES.slice(1, 4).map(navLink).join('')}
           <div class="nav-label">Compliance</div>
           ${navLink(PAGES[4])}
+          <div class="nav-label">Support</div>
+          ${navLink(PAGES[5])}
         </nav>
         <div class="sidebar-foot">Signed in as ${esc(user.code)}<br>Field app: <a href="../" target="_blank" rel="noopener">open</a></div>
       </aside>
@@ -121,6 +125,7 @@ function renderShell() {
             </summary>
             <div class="menu" role="menu">
               <button type="button" data-menu="password" role="menuitem">${icon('lock')} Change password</button>
+              <button type="button" data-menu="help" role="menuitem">${icon('help')} Help &amp; guides</button>
               <hr>
               <button type="button" data-menu="logout" role="menuitem">${icon('logout')} Sign out</button>
             </div>
@@ -150,6 +155,7 @@ function renderShell() {
       renderLogin('You have been signed out.');
     }
     if (action === 'password') changePassword();
+    if (action === 'help') location.hash = '#/help';
   };
   document.addEventListener('click', (e) => {
     if (menu.open && !menu.contains(e.target)) menu.open = false;

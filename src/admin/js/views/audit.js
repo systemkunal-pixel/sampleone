@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { esc, num, dateTime, emptyState, pager } from '../ui.js';
+import { esc, num, dateTime, emptyState, pager, helpButton } from '../ui.js';
 import { setQuery } from '../main.js';
 
 const ACTIONS = {
@@ -32,7 +32,8 @@ export async function render(el, q, alive) {
   const data = await api(`audit?${q}`);
   if (!alive()) return;
   el.innerHTML = `
-    <div class="page-head"><div><h1>Audit log</h1><p>Every sign-in, user change, import, reassignment and deposit decision. ${num(data.total)} entries.</p></div></div>
+    <div class="page-head"><div><h1>Audit log</h1><p>Every sign-in, user change, import, reassignment and deposit decision. ${num(data.total)} entries.</p></div>
+      <div class="page-actions">${helpButton('audit-log')}</div></div>
     <form class="toolbar" id="filters">
       <select class="select" name="action" aria-label="Action">
         <option value="">All actions</option>

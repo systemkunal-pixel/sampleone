@@ -1,7 +1,7 @@
 import { api, download } from '../api.js';
 import {
   esc, icon, inr, inr2, num, date, dateTime, plural, ageBadge, BUCKETS, toast, openDrawer, closeDrawer, drawerHead,
-  confirmDialog, emptyState, pager,
+  confirmDialog, emptyState, pager, helpButton,
 } from '../ui.js';
 import { route, setQuery } from '../main.js';
 
@@ -214,6 +214,7 @@ export async function render(el, q, alive) {
       <div class="page-head">
         <div><h1>Loans</h1><p>${plural(data.total, 'loan')} · outstanding ${inr(data.totals.outstanding)} · overdue ${inr(data.totals.overdue)}</p></div>
         <div class="page-actions">
+          ${helpButton('assign-loans')}
           <button class="btn" data-act="export">${icon('download')} Export CSV</button>
           <a class="btn primary" href="#/import">${icon('upload')} Import loans</a>
         </div>

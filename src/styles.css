@@ -352,3 +352,50 @@ img.logo { display: block; background: none; }
   body { background: #fff; }
   .receipt { border: 1px dashed #000; }
 }
+
+/* ---------- help & guides ---------- */
+.help-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / .2);
+  color: inherit;
+  font-weight: 700;
+  text-decoration: none;
+}
+.help-item { display: flex; flex-direction: column; gap: 2px; }
+.help-article { line-height: 1.55; }
+.help-article h4 { margin: 14px 0 6px; font-size: .95rem; }
+.help-article ul, .help-article ol { padding-left: 20px; margin: 6px 0; }
+.help-article li { margin-bottom: 6px; }
+.help-steps { counter-reset: step; list-style: none; padding-left: 0 !important; }
+.help-steps li { counter-increment: step; position: relative; padding-left: 36px; min-height: 26px; }
+.help-steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--brand);
+  color: var(--brand-ink);
+  font-size: .8rem;
+  font-weight: 700;
+}
+.help-tips { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--chip); font-size: .9rem; }
+.help-tips ul { margin: 4px 0 0; }
+.help-table { width: 100%; border-collapse: collapse; font-size: .88rem; margin: 8px 0; }
+.help-table th, .help-table td { border-bottom: 1px solid var(--line); padding: 6px 4px; text-align: left; vertical-align: top; }
+.help-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 0; }
+.help-dl dt { font-weight: 700; }
+.help-dl dd { margin: 0; }
+@media print {
+  .help-article { border: 0; }
+  .help-btn { display: none; }
+}

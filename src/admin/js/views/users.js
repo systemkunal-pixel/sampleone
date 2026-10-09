@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import {
   esc, icon, initials, num, ago, roleBadge, statusBadge, toast, openDrawer, closeDrawer, drawerHead,
-  dialog, confirmDialog, emptyState, generateSecret,
+  dialog, confirmDialog, emptyState, generateSecret, helpButton,
 } from '../ui.js';
 import { route, setQuery } from '../main.js';
 
@@ -205,7 +205,7 @@ export async function render(el, q, alive) {
   el.innerHTML = `
     <div class="page-head">
       <div><h1>Users</h1><p>${num(counts.active)} active · ${num(counts.inactive)} deactivated</p></div>
-      <div class="page-actions"><button class="btn primary" data-act="add">${icon('plus')} Add user</button></div>
+      <div class="page-actions">${helpButton('add-user')}<button class="btn primary" data-act="add">${icon('plus')} Add user</button></div>
     </div>
     <form class="toolbar" id="filters" role="search">
       <label class="search"><span class="sr-only">Search users</span>${icon('search')}<input class="input" name="q" type="search" placeholder="Search name or code" value="${esc(q.get('q') || '')}"></label>

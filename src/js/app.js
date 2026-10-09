@@ -7,6 +7,7 @@ import * as store from './store.js';
 import { prepareSlip, putSlip, deleteSlip } from './slips.js';
 import * as install from './install.js';
 import * as supervisor from './supervisor.js';
+import { viewHelp, viewHelpTopic, setHelpQuery } from './help.js';
 import {
   esc, plural, toast, fmtDate, fmtTime, fmtWhen, netPill, header, verificationTag, decisionLine,
   trackUrl, revokeSlipUrls, hydrateSlips, viewNotFound,
@@ -117,6 +118,7 @@ function viewLogin() {
         <p class="error" id="login-error" role="alert"></p>
         <button class="btn primary big" type="submit">Log in</button>
       </form>
+      <p class="small"><a href="#/help/sign-in">Trouble signing in?</a> · <a href="#/help/install-phone">Install the app</a> · <a href="#/help">All help</a></p>
     </section>`;
 }
 
@@ -181,7 +183,7 @@ function viewToday() {
   const pendingDeposits = loans.flatMap((l) => l.payments).filter((p) => p.deposit?.verification === 'pending').length;
 
   return `
-    ${header(`Hi, ${me.name.split(' ')[0]}`)}
+    ${header(`Hi, ${me.name.split(' ')[0]}`, '', 'plan-day')}
     ${installBanner()}
     ${alerts(loans, today)}
     <section class="stats">
@@ -219,7 +221,7 @@ function viewAccounts() {
     `<button class="chip ${accountsFilter.bucket === key ? 'active' : ''}" data-bucket="${esc(key)}">${esc(label)}</button>`;
 
   return `
-    ${header(isOfficer() ? 'My accounts' : 'Branch accounts')}
+    ${header(isOfficer() ? 'My accounts' : 'Branch accounts', '', 'find-account')}
     <div class="search"><input id="search" type="search" placeholder="Search name, phone, village, loan no.${isOfficer() ? '' : ', officer'}" value="${esc(accountsFilter.q)}"></div>
     <div class="chips">${chip('all', 'All')}${DPD_BUCKETS.map((b) => chip(b.key, b.label)).join('')}</div>
     <p class="muted small">${plural(rows.length, 'account')}</p>
@@ -254,7 +256,7 @@ function viewLoan(id) {
   const schedule = allocate(loan);
 
   return `
-    ${header(b.name, isOfficer() ? '#/' : '#/accounts')}
+    ${header(b.name, isOfficer() ? '#/' : '#/accounts', isOfficer() ? 'collect-payment' : 'branch-view')}
     <section class="card">
       <div class="row between"><span class="muted small">${esc(loan.loanNo)} · ${esc(loan.product)}</span>${bucketBadge(st)}</div>
       <div class="muted small">${esc(b.business)}${isOfficer() ? '' : ` · officer ${esc(loan.officerCode || '—')}`}</div>
@@ -303,7 +305,7 @@ function viewPay(id) {
   const st = loanStatus(loan, isoDate());
   const quick = [...new Set([loan.emi, st.overdue, st.outstanding].filter((v) => v > 0 && v <= st.outstanding))];
   return `
-    ${header('Collect payment', `#/loan/${loan.id}`)}
+    ${header('Collect payment', `#/loan/${loan.id}`, 'collect-payment')}
     <form id="pay-form" class="card form" data-loan="${esc(loan.id)}">
       <div class="muted">${esc(loan.borrower.name)} · ${esc(loan.loanNo)}</div>
       <div class="muted small">Overdue ${formatINR(st.overdue)} · Outstanding ${formatINR(st.outstanding)}</div>
@@ -333,7 +335,7 @@ function viewVisit(id) {
   if (!loan || !isOfficer()) return viewNotFound();
   const today = isoDate();
   return `
-    ${header('Log visit', `#/loan/${loan.id}`)}
+    ${header('Log visit', `#/loan/${loan.id}`, 'log-visit')}
     <form id="visit-form" class="card form" data-loan="${esc(loan.id)}">
       <div class="muted">${esc(loan.borrower.name)} · ${esc(loan.loanNo)}</div>
       <label>Outcome
@@ -363,7 +365,7 @@ function viewReceipt(loanId, paymentId) {
   const d = p.deposit;
   const by = p.officer === me.code ? `${me.name} (${me.code})` : p.officer;
   return `
-    ${header(d ? 'Acknowledgement' : 'Receipt', `#/loan/${loan.id}`)}
+    ${header(d ? 'Acknowledgement' : 'Receipt', `#/loan/${loan.id}`, d ? 'record-bank-deposit' : 'share-receipt')}
     <p class="sync-line ${p.synced ? 'ok' : 'warn'}">${p.synced ? '✓ Received by server' : '⏳ Saved on this phone — sends automatically when the server is reachable'}</p>
     <section class="card receipt" id="receipt">
       <div class="center"><strong>${d ? 'BANK DEPOSIT ACKNOWLEDGEMENT' : 'PAYMENT RECEIPT'}</strong><div class="muted small">${esc(loan.branch || me.branch)} branch</div></div>
@@ -400,7 +402,7 @@ function viewSummary() {
   const pf = portfolioSummary(loans, today);
   const maxCount = Math.max(1, ...pf.buckets.map((b) => b.count));
   return `
-    ${header(isOfficer() ? 'Summary' : 'Branch summary')}
+    ${header(isOfficer() ? 'Summary' : 'Branch summary', '', isOfficer() ? 'end-of-day' : 'branch-view')}
     <section class="card">
       <h2>Today · ${esc(fmtDate(today))}</h2>
       <div class="big-number">${formatINR(day.collected)}</div>
@@ -444,7 +446,7 @@ function viewSettings() {
     offline: 'Server unreachable — no signal or server maintenance. Keep working; records are kept on this phone and sent automatically.',
   }[store.net.status] || 'Checking connection…';
   return `
-    ${header('Settings')}
+    ${header('Settings', '', 'work-offline')}
     <section class="card">
       <h2>${esc(me.name)}</h2>
       <p class="muted small">${esc(me.code)} · ${me.role === 'officer' ? 'Field officer' : 'Supervisor'} · ${esc(me.branch)}</p>
@@ -457,6 +459,11 @@ function viewSettings() {
         ${outbox.length ? '<button class="btn primary" data-action="sync">⟳ Send now</button>' : ''}
         <button class="btn" data-action="refresh">↻ Refresh from server</button>
       </div>
+    </section>
+    <section class="card">
+      <h2>Help &amp; guides</h2>
+      <p class="muted small">Step-by-step guides for every task, a daily routine and answers to common problems. Works offline.</p>
+      <a class="btn primary" href="#/help">📖 Open help</a>
     </section>
     <section class="card">
       <h2>App</h2>
@@ -484,9 +491,11 @@ function renderNav(tab) {
 async function route({ keepScroll = false } = {}) {
   const seq = ++routeSeq;
   const { session } = store.getState();
+  const helpMatch = /^#\/help(?:\/([a-z0-9-]+))?$/.exec(location.hash);
   if (!session || session.expired) {
     $nav.hidden = true;
-    $app.innerHTML = viewLogin();
+    $app.innerHTML = helpMatch ? (helpMatch[1] ? viewHelpTopic(helpMatch[1]) : viewHelp()) : viewLogin();
+    if (helpMatch) window.scrollTo(0, 0);
     return;
   }
   if (store.user().role === 'admin') {
@@ -505,6 +514,7 @@ async function route({ keepScroll = false } = {}) {
   else if (parts[0] === 'accounts') [view, tab] = [viewAccounts, 'accounts'];
   else if (parts[0] === 'summary') [view, tab] = [viewSummary, 'summary'];
   else if (parts[0] === 'settings') [view, tab] = [viewSettings, 'settings'];
+  else if (parts[0] === 'help') [view, tab] = [() => (parts[1] ? viewHelpTopic(parts[1]) : viewHelp()), 'settings'];
   else if (parts[0] === 'deposits' && !officer) [view, tab] = [() => supervisor.viewDeposits(parts[1]), 'deposits'];
   else if (parts[0] === 'deposit' && !officer) view = () => supervisor.viewDeposit(parts[1]);
   else if (parts[0] === 'loan' && parts[2] === 'pay') view = () => viewPay(parts[1]);
@@ -749,6 +759,16 @@ document.addEventListener('click', async (e) => {
 });
 
 document.addEventListener('input', (e) => {
+  if (e.target.id === 'help-search') {
+    setHelpQuery(e.target.value);
+    const pos = e.target.selectionStart;
+    route({ keepScroll: true }).then(() => {
+      const input = document.getElementById('help-search');
+      input?.focus();
+      input?.setSelectionRange(pos, pos);
+    });
+    return;
+  }
   if (e.target.id === 'search') {
     accountsFilter.q = e.target.value;
     const pos = e.target.selectionStart;

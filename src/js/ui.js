@@ -36,11 +36,14 @@ export function netPill() {
   return '<span class="net">…</span>';
 }
 
-export function header(title, back) {
+/** Top bar. `help` is the id of the guide for this screen (opened by the ? button). */
+export function header(title, back, help = '') {
+  const signedIn = Boolean(store.getState().session && !store.getState().session.expired);
   return `<header class="topbar">
     ${back ? `<a class="back" href="${esc(back)}" aria-label="Back">‹</a>` : ''}
     <h1>${esc(title)}</h1>
-    <span id="net-pill">${netPill()}</span>
+    ${signedIn ? `<span id="net-pill">${netPill()}</span>` : ''}
+    <a class="help-btn" href="#/help${help ? `/${esc(help)}` : ''}" aria-label="Help for this screen" title="Help">?</a>
   </header>`;
 }
 

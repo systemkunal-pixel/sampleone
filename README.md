@@ -76,6 +76,15 @@ powershell -ExecutionPolicy Bypass -File C:\src\sampleone\scripts\install.ps1 -D
 - **Import loans:** upload Excel (.xlsx), CSV or JSON, then review the result before anything is saved (new or updated loans, warnings, and errors with row numbers), download an error report, and confirm. Import history is kept, and a downloadable Excel template is included.
 - **Audit log:** every sign-in (and failed attempt), user change, PIN reset, import, reassignment and deposit decision.
 
+## Help & guides inside the app
+
+The full user manual is built in, so staff don't need a separate document:
+
+- **Phone app:** tap **?** at the top of any screen to open the guide for that screen. Or go to **Settings → Help & guides**, which is searchable, works offline, and can be opened from the sign-in screen. Officers and supervisors each see only their own topics.
+- **Admin console:** open **Help & guides** in the sidebar (or from the account menu). You can filter by role, and **Print guide** makes a printable training handout for each role. Every page has a **Help** button for its own topic. A **Getting started** checklist on the dashboard ticks itself off as you complete setup.
+- **Contents:** getting started, how-to guides for every task, daily routines for each role, a two-week rollout plan, troubleshooting and a glossary.
+- **Editing:** the content lives in one file, `src/help/content.js`. Edit it there, and `tests/help.test.js` checks that every help link in the apps still points to an existing topic.
+
 ## Loan import format
 
 Download the template from **Import loans → Excel template**. The rules:

@@ -1,5 +1,5 @@
 // App-shell service worker: cache-first for local assets so the app opens with no network.
-const CACHE = 'loan-recovery-v5';
+const CACHE = 'loan-recovery-v6';
 const SHELL = [
   './',
   './index.html',
@@ -11,6 +11,8 @@ const SHELL = [
   './icons/maskable-512.png',
   './icons/apple-touch-icon.png',
   './js/install.js',
+  './js/help.js',
+  './help/content.js',
   './js/api.js',
   './js/ui.js',
   './js/supervisor.js',

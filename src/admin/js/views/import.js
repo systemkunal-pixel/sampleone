@@ -1,5 +1,5 @@
 import { api, download } from '../api.js';
-import { esc, icon, inr, num, date, dateTime, plural, toast, confirmDialog, emptyState } from '../ui.js';
+import { esc, icon, inr, num, date, dateTime, plural, toast, confirmDialog, emptyState, helpButton } from '../ui.js';
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const FIELD_LABELS = {
@@ -174,7 +174,8 @@ export async function render(el, q, alive) {
 
   const draw = () => {
     el.innerHTML = `
-      <div class="page-head"><div><h1>Import loans</h1><p>Add new loans or update existing ones from your loan system's export.</p></div></div>
+      <div class="page-head"><div><h1>Import loans</h1><p>Add new loans or update existing ones from your loan system's export.</p></div>
+        <div class="page-actions">${helpButton('import-loans', 'How to import')}${helpButton('fix-import-errors', 'Fixing errors')}</div></div>
       ${steps()}
       ${state.step === 'upload' ? uploadStep(imports) : state.step === 'review' ? reviewStep() : doneStep()}`;
     const zone = el.querySelector('#dropzone');
