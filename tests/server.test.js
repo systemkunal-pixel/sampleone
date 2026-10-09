@@ -186,3 +186,10 @@ test('static hosting sends security headers and blocks traversal', opts, async (
   assert.equal((await api('/%2e%2e/package.json')).status, 404); // normalised by the URL parser, stays inside src/
   assert.equal((await api('/api/nope')).status, 404);
 });
+
+test('the field app at /app/ reaches the API through its relative /app/api/ path', opts, async () => {
+  const res = await api('/app/api/login', { method: 'POST', body: { code: 'FO27', pin: '1234' } });
+  assert.equal(res.status, 200);
+  assert.ok(res.body.token);
+  assert.equal((await api('/app/api/bootstrap', { token: res.body.token })).status, 200);
+});

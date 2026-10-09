@@ -267,6 +267,8 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR }) {
   return async function handle(req, res) {
     try {
       const url = new URL(req.url, 'http://x');
+      // The field app (served at /app/) calls the API relatively, as /app/api/….
+      if (url.pathname.startsWith('/app/api/')) url.pathname = url.pathname.slice(4);
       if (!url.pathname.startsWith('/api/')) return await serveStatic(req, res);
       const found = router.match(req.method, url.pathname);
       if (!found) throw new HttpError(404, 'Not found.');
