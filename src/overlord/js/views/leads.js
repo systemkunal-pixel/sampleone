@@ -5,7 +5,7 @@ import { route, setQuery } from '../main.js';
 const STATUS = {
   new: ['New', 'warn'], contacted: ['Contacted', 'info'], demo_done: ['Demo done', 'brand'], won: ['Won', 'ok'], lost: ['Lost', ''],
 };
-const LANG = { en: 'English', hi: 'Hindi', bn: 'Bengali', mr: 'Marathi', or: 'Odia' };
+const LANG = { en: 'English', hi: 'Hindi', bn: 'Bengali' };
 const badge = (s) => `<span class="badge ${STATUS[s]?.[1] ?? ''}">${STATUS[s]?.[0] || esc(s)}</span>`;
 
 export async function render(el, query) {

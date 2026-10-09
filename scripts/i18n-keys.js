@@ -12,7 +12,7 @@ import { pathToFileURL } from 'node:url';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const SOURCES = ['src/js', 'src/admin/js', 'src/home'];
-export const LANGS = ['hi', 'bn', 'mr', 'or'];
+export const LANGS = ['hi', 'bn'];
 
 function files(dir) {
   return readdirSync(join(ROOT, dir)).flatMap((f) => {
@@ -33,7 +33,7 @@ export async function collectKeys() {
   }
   for (const f of files('src/home').filter((p) => p.endsWith('.html'))) {
     const html = readFileSync(join(ROOT, f), 'utf8');
-    for (const m of html.matchAll(/<(\w+)([^>]*\sdata-i18n(?:[\s=>][^>]*)?)>([\s\S]*?)<\/\1>/g)) keys.add(m[3].trim().replace(/\s+/g, ' '));
+    for (const m of html.matchAll(/<(\w+)([^>]*\sdata-i18n(?:[\s=][^>]*)?)>([\s\S]*?)<\/\1>/g)) keys.add(m[3].trim().replace(/\s+/g, ' '));
   }
   const server = (await import(pathToFileURL(join(ROOT, 'src/i18n/server-messages.js')).href)).default;
   for (const k of server) keys.add(k);

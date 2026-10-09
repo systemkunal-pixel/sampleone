@@ -100,9 +100,9 @@ powershell -ExecutionPolicy Bypass -File C:\src\sampleone\scripts\install.ps1 -D
 
 ## Languages
 
-The home page, the field app, the admin console and the whole help manual are available in **English, हिन्दी (Hindi), বাংলা (Bengali), मराठी (Marathi) and ଓଡ଼ିଆ (Odia)**. The overlord console stays in English.
+The home page, the field app, the admin console and the whole help manual are available in **English, हिन्दी (Hindi) and বাংলা (Bengali)**. The overlord console stays in English. Marathi and Odia translations were started and are kept in the git history (commits `618f69e`, `ad7087f` and the help-manual commit before it) for when they are wanted.
 
-- **Choosing a language:** use the selector on the sign-in screens, in the field app's **Settings**, in the admin console's account menu, or in the home page header. The choice is remembered on that device. The first time, the browser's language is used if it is one of the five.
+- **Choosing a language:** use the selector on the sign-in screens, in the field app's **Settings**, in the admin console's account menu, or in the home page header. The choice is remembered on that device. The first time, the browser's language is used if it is one of the three.
 - **How it works:**
   - The English text is the key: the code calls `t('Collect payment')`, and `src/i18n/<lang>.js` maps English to the translation. Anything missing falls back to English.
   - Error messages from the server are translated in the browser by matching templates such as `Try again in {n} minutes.`. These are listed in `src/i18n/server-messages.js`.

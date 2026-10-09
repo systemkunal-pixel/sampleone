@@ -9,8 +9,6 @@ export const LANGS = [
   { code: 'en', name: 'English', native: 'English' },
   { code: 'hi', name: 'Hindi', native: 'हिन्दी' },
   { code: 'bn', name: 'Bengali', native: 'বাংলা' },
-  { code: 'mr', name: 'Marathi', native: 'मराठी' },
-  { code: 'or', name: 'Odia', native: 'ଓଡ଼ିଆ' },
 ];
 const CODES = LANGS.map((l) => l.code);
 const KEY = 'loandesk:lang';
