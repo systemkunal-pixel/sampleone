@@ -59,8 +59,8 @@ async function request(url, { method = 'GET', body, raw = false, auth = true } =
 /** Admin endpoints: api('users'), api('users', { method: 'POST', body }) … */
 export const api = (path, opts) => request(`../api/admin/${path}`, opts);
 
-export async function login(code, pin) {
-  const res = await request('../api/login', { method: 'POST', body: { code, pin }, auth: false });
+export async function login(company, code, pin) {
+  const res = await request('../api/login', { method: 'POST', body: { company, code, pin }, auth: false });
   if (res.user.role !== 'admin') {
     await request('../api/logout', { method: 'POST', raw: true, auth: false }).catch(() => {});
     throw new ApiError(403, 'This console is for admin accounts. Field staff use the mobile app.');
@@ -69,8 +69,20 @@ export async function login(code, pin) {
   return res.user;
 }
 
+/** Who is signed in and what their company's plan includes: { user, plan, features, maxOfficers }. */
+export const me = () => request('../api/me');
+
+/** Starts a support session handed over by the overlord console (token in the URL fragment). */
+export async function adoptSupportToken(token) {
+  session.set({ token, user: null });
+  const ctx = await me();
+  session.set({ token, user: ctx.user });
+  return ctx;
+}
+
 export async function logout() {
-  await request('../api/logout', { method: 'POST' }).catch(() => {});
+  const support = session.get()?.user?.support;
+  await request(support ? '../api/support/end' : '../api/logout', { method: 'POST' }).catch(() => {});
   session.clear();
 }
 

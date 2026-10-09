@@ -114,6 +114,7 @@ function viewLogin() {
       <p class="muted">${expired ? 'Your session has expired. Log in again to continue.' : 'Log in with your officer code and PIN.'}</p>
       ${outbox.length ? `<p class="note warn-note">${plural(outbox.length, 'record')} on this phone still need to reach the server. They'll be sent as soon as you log in.</p>` : ''}
       <form id="login-form" class="card form">
+        <label>Company code<input name="company" maxlength="12" autocapitalize="characters" autocomplete="organization" value="${esc(session?.user?.company?.code || store.rememberedCompany())}" placeholder="e.g. BRMC"></label>
         <label>Officer / supervisor code<input name="code" required maxlength="12" autocapitalize="characters" autocomplete="username" value="${esc(session?.user?.code || '')}"></label>
         <label>PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" required minlength="4" maxlength="8" autocomplete="current-password"></label>
         <p class="error" id="login-error" role="alert"></p>
@@ -313,7 +314,7 @@ function viewPay(id) {
       <label>Amount (₹)<input name="amount" type="number" inputmode="decimal" step="0.01" min="1" max="${st.outstanding}" required value="${st.overdue || ''}"></label>
       <div class="chips">${quick.map((v) => `<button type="button" class="chip" data-fill="${v}">${formatINR(v)}</button>`).join('')}</div>
       <fieldset class="modes"><legend>Mode</legend>
-        ${PAYMENT_MODES.map((m, i) => `<label class="radio"><input type="radio" name="mode" value="${esc(m)}" ${i === 0 ? 'checked' : ''}> ${esc(m)}</label>`).join('')}
+        ${PAYMENT_MODES.filter((m) => m !== BANK_DEPOSIT || store.getState().features?.bank_deposits !== false).map((m, i) => `<label class="radio"><input type="radio" name="mode" value="${esc(m)}" ${i === 0 ? 'checked' : ''}> ${esc(m)}</label>`).join('')}
       </fieldset>
       <label id="ref-wrap" hidden>Reference / UTR / Cheque no.<input name="reference" autocomplete="off"></label>
       <div id="deposit-fields" class="form" hidden>
@@ -451,6 +452,7 @@ function viewSettings() {
     <section class="card">
       <h2>${esc(me.name)}</h2>
       <p class="muted small">${esc(me.code)} · ${me.role === 'officer' ? 'Field officer' : 'Supervisor'} · ${esc(me.branch)}</p>
+      ${me.company ? `<p class="muted small">${esc(me.company.name)} · company code ${esc(me.company.code)}</p>` : ''}
     </section>
     <section class="card">
       <h2>Connection ${netPill()}</h2>
@@ -652,7 +654,7 @@ document.addEventListener('submit', async (e) => {
     btn.disabled = true;
     btn.textContent = 'Logging in…';
     try {
-      await store.login(data.code, data.pin);
+      await store.login(data.company, data.code, data.pin);
       location.hash = '#/';
       install.protectStorage().catch(() => {});
     } catch (err) {

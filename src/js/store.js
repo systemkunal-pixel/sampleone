@@ -10,7 +10,8 @@ const REFRESH_EVERY_MS = 60000;
 
 function blank() {
   return {
-    session: null, // { token, user: { code, name, role, branch }, expired? }
+    session: null, // { token, user: { code, name, role, branch, company: { code, name } }, expired? }
+    features: {}, // what the company's plan includes, from the server
     loans: [],
     outbox: [],
     rejected: [], // records the server refused: { id, type, loanId, summary, error, at }
@@ -78,17 +79,32 @@ function handleError(err) {
 
 // ---------- session ----------
 
-export async function login(code, pin) {
-  const pending = state.outbox[0]?.officer;
-  const wanted = String(code).trim().toUpperCase();
-  if (pending && pending !== wanted) {
-    throw new Error(`This phone has ${state.outbox.length} unsent record(s) from ${pending}. Log in as ${pending} to send them first.`);
+const COMPANY_KEY = 'loandesk:company';
+export function rememberedCompany() {
+  try {
+    return localStorage.getItem(COMPANY_KEY) || '';
+  } catch {
+    return '';
   }
-  const res = await call('login', { method: 'POST', body: { code: wanted, pin } }).catch((err) => {
+}
+
+export async function login(company, code, pin) {
+  const pending = state.outbox[0]?.officer;
+  const pendingCompany = state.session?.user?.company?.code;
+  const wanted = String(code).trim().toUpperCase();
+  const wantedCompany = String(company || '').trim().toUpperCase();
+  if (pending && (pending !== wanted || (pendingCompany && wantedCompany && pendingCompany !== wantedCompany))) {
+    throw new Error(`This phone has ${state.outbox.length} unsent record(s) from ${pending}${pendingCompany ? ` (${pendingCompany})` : ''}. Log in as ${pending} to send them first.`);
+  }
+  const res = await call('login', { method: 'POST', body: { company: wantedCompany, code: wanted, pin } }).catch((err) => {
     if (err instanceof OfflineError) throw new Error('Cannot reach the server. Check your connection and try again.');
     throw err;
   });
-  const sameUser = state.session?.user?.code === res.user.code;
+  try {
+    localStorage.setItem(COMPANY_KEY, res.user.company.code);
+  } catch {}
+  const sameUser = state.session?.user?.code === res.user.code &&
+    (!state.session.user.company || state.session.user.company.code === res.user.company.code);
   state = { ...(sameUser ? state : blank()), session: { token: res.token, user: res.user } };
   if (!sameUser) await clearSlips().catch(() => {});
   save();
@@ -130,6 +146,7 @@ export function refresh() {
       const data = await call('bootstrap', { token: token() });
       state.loans = applyOutbox(data.loans);
       state.session.user = data.user;
+      state.features = data.features || {};
       const local = state.receiptSeq.date === data.receiptSeq.date ? state.receiptSeq.seq : 0;
       state.receiptSeq = { date: data.receiptSeq.date, seq: Math.max(local, data.receiptSeq.seq) };
       net.lastRefreshMs = Date.now();

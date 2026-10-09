@@ -1,0 +1,63 @@
+/* LoanDesk overlord console: the admin console's design system plus a few platform-level touches. */
+body.overlord { --brand: #0a3a24; --brand-hover: #082d1c; --brand-soft: #e3efe8; --gold: #f5b82e; --gold-ink: #3d2a00; }
+@media (prefers-color-scheme: dark) {
+  body.overlord { --brand: #3fb07a; --brand-hover: #4cc286; --brand-soft: #173a29; --gold: #f5b82e; --gold-ink: #2a1d00; }
+}
+.overlord .topbar { box-shadow: inset 0 3px 0 var(--gold); }
+.overlord .brand small { color: var(--gold-ink); background: var(--gold); padding: 1px 6px; border-radius: 4px; display: inline-block; margin-top: 2px; }
+.overlord .login-art { background: radial-gradient(1200px 600px at 0% 0%, #17804f 0%, #0a3a24 55%, #061f14 100%); }
+
+.co { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.co .avatar { flex: none; }
+.co-name { font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-size: .72rem; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--brand-soft); color: var(--brand); }
+.chip.off { background: var(--surface-2); color: var(--muted); }
+.scale { display: flex; gap: 12px; flex-wrap: wrap; font-variant-numeric: tabular-nums; font-size: .86rem; color: var(--text-2); }
+.scale span { display: inline-flex; gap: 4px; align-items: center; }
+.scale .icon { width: 15px; height: 15px; color: var(--muted); }
+.flag { display: inline-flex; gap: 4px; align-items: center; font-size: .72rem; font-weight: 650; color: var(--warn); }
+.flag .icon { width: 13px; height: 13px; }
+
+@media (min-width: 1181px) { .kpis.six { grid-template-columns: repeat(6, 1fr); } }
+.co { min-width: 220px; }
+
+/* support session banner (admin console) and live dot */
+.live { display: inline-flex; align-items: center; gap: 6px; color: var(--bad); font-weight: 650; }
+.live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: pulse 1.6s infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .live::before { animation: none; } }
+
+/* enrolment */
+.enroll { display: grid; grid-template-columns: 180px 1fr; gap: 18px; align-items: start; }
+.enroll img { width: 180px; height: 180px; background: #fff; border-radius: 10px; border: 1px solid var(--border); }
+.secret { font: 600 1rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .06em; word-break: break-all; background: var(--surface-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: 8px 10px; }
+.code-input { font: 600 1.4rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .4em; text-align: center; }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: .9rem; color: var(--text-2); }
+
+/* plan matrix */
+.matrix th, .matrix td { text-align: center; }
+.matrix th:first-child, .matrix td:first-child { text-align: left; }
+.toggle { position: relative; display: inline-block; width: 38px; height: 22px; }
+.toggle input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.toggle i { position: absolute; inset: 0; border-radius: 99px; background: var(--border-strong); transition: background .15s; pointer-events: none; }
+.toggle i::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.toggle input:checked + i { background: var(--brand); }
+.toggle input:checked + i::after { transform: translateX(16px); }
+.toggle input:focus-visible + i { box-shadow: var(--focus); }
+.tri { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
+.tri button { border: 0; background: var(--surface); color: var(--text-2); font: inherit; font-size: .78rem; font-weight: 600; padding: 4px 9px; cursor: pointer; }
+.tri button { white-space: nowrap; }
+.tri button + button { border-left: 1px solid var(--border-strong); }
+.tri button.on { background: var(--brand); color: var(--brand-ink); }
+.tri button:focus-visible { outline: none; box-shadow: var(--focus); }
+
+.guide h2 { margin: 22px 0 8px; }
+.guide h2:first-child { margin-top: 0; }
+.guide p, .guide li { color: var(--text-2); line-height: 1.6; }
+.guide ol, .guide ul { padding-left: 20px; }
+
+@media (max-width: 760px) {
+  .enroll { grid-template-columns: 1fr; justify-items: center; }
+  .matrix-wrap { overflow-x: auto; }
+}

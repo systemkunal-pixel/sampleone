@@ -369,9 +369,9 @@ export function normalise({ records, installments }) {
  * Checks normalised loans against the database: officer assignment, and whether each loan is new or
  * an update (matched by loan number). Moves failures into errors and adds warnings.
  */
-export async function checkAgainstDb(conn, valid, errors) {
+export async function checkAgainstDb(conn, companyId, valid, errors) {
   const officers = new Map(
-    (await conn.query("SELECT code, branch, active FROM users WHERE role = 'officer'")).map((o) => [o.code, o]));
+    (await conn.query("SELECT code, branch, active FROM users WHERE company_id = ? AND role = 'officer'", [companyId])).map((o) => [o.code, o]));
   const existing = new Map();
   const existingIds = new Map();
   const nos = valid.map((v) => v.loan.loanNo);
@@ -379,13 +379,18 @@ export async function checkAgainstDb(conn, valid, errors) {
     const chunk = nos.slice(i, i + 1000);
     const rows = await conn.query(
       `SELECT l.id, l.loan_no, l.installments, (SELECT COUNT(*) FROM payments p WHERE p.loan_id = l.id) AS payments
-       FROM loans l WHERE l.loan_no IN (?)`, [chunk]);
+       FROM loans l WHERE l.company_id = ? AND l.loan_no IN (?)`, [companyId, chunk]);
     for (const r of rows) existing.set(r.loan_no.toLowerCase(), r);
+  }
+  // Loan ids are global, so a new loan's id gets the company prefix ("7-MFL-25-2001").
+  const prefix = `${companyId}-`;
+  for (const v of valid) {
+    if (!existing.has(v.loan.loanNo.toLowerCase()) && !v.loan.id.startsWith(prefix)) v.loan.id = (prefix + v.loan.id).slice(0, 40);
   }
   const ids = valid.map((v) => v.loan.id);
   for (let i = 0; i < ids.length; i += 1000) {
-    const rows = await conn.query('SELECT id, loan_no FROM loans WHERE id IN (?)', [ids.slice(i, i + 1000)]);
-    for (const r of rows) existingIds.set(r.id, r.loan_no);
+    const rows = await conn.query('SELECT id, loan_no, company_id FROM loans WHERE id IN (?)', [ids.slice(i, i + 1000)]);
+    for (const r of rows) existingIds.set(r.id, r.company_id === companyId ? r.loan_no : null);
   }
   const ok = [];
   for (const v of valid) {
@@ -395,13 +400,14 @@ export async function checkAgainstDb(conn, valid, errors) {
     const match = existing.get(loan.loanNo.toLowerCase());
     if (match) {
       loan.loanNo = match.loan_no; // keep stored spelling
-      if (loan.id !== match.id && loan.id !== loanIdFor(loan.loanNo)) problems.push(`Loan ${loan.loanNo} already exists with ID ${match.id}.`);
+      if (![match.id, loanIdFor(loan.loanNo), match.id.replace(prefix, '')].includes(loan.id)) problems.push(`Loan ${loan.loanNo} already exists with ID ${match.id}.`);
       loan.id = match.id;
       if (match.payments > 0 && JSON.stringify(JSON.parse(match.installments)) !== JSON.stringify(loan.installments)) {
         warnings.push(`Repayment schedule changes; ${match.payments} recorded payment(s) are kept and re-allocated.`);
       }
     } else if (existingIds.has(loan.id)) {
-      problems.push(`ID ${loan.id} is already used by loan ${existingIds.get(loan.id)}.`);
+      const other = existingIds.get(loan.id);
+      problems.push(other ? `ID ${loan.id} is already used by loan ${other}.` : `ID ${loan.id} is already in use. Leave the ID column blank.`);
     }
     if (loan.officerCode) {
       const o = officers.get(loan.officerCode);

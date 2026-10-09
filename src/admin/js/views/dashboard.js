@@ -67,7 +67,7 @@ export async function render(el, query, alive) {
       <div><h1>Dashboard</h1><p>Portfolio health across ${plural(s.branches.length, 'branch', 'branches')}, as of now.</p></div>
       <div class="page-actions">
         ${helpButton('read-dashboard')}
-        <a class="btn" href="#/import">${icon('upload')} Import loans</a>
+        <a class="btn" href="#/import" data-needs="loan_import">${icon('upload')} Import loans</a>
         <a class="btn primary" href="#/users">${icon('plus')} Add user</a>
       </div>
     </div>
@@ -126,7 +126,7 @@ export async function render(el, query, alive) {
           </div>
         </section>
         <section class="card">
-          <div class="card-head"><div><h2>Recent activity</h2></div><a class="btn sm" href="#/audit">View all</a></div>
+          <div class="card-head"><div><h2>Recent activity</h2></div><a class="btn sm" href="#/audit" data-needs="audit_log">View all</a></div>
           ${s.recent.length ? `<ul class="activity">${s.recent.map((a) => `
             <li><span class="avatar">${esc((a.user_code || '?').slice(0, 2))}</span>
               <div class="what"><b>${esc(a.user_code || 'System')}</b> ${esc(describe(a.action))}${a.entity_id ? ` <span class="muted">${esc(a.entity_id)}</span>` : ''}</div>

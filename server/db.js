@@ -43,10 +43,11 @@ export const now = () => localTimestamp().replace('T', ' ');
 const ts = (v) => (v ? String(v).replace(' ', 'T') : null);
 const json = (v) => (v == null ? null : typeof v === 'string' ? JSON.parse(v) : v);
 
-export function audit(conn, userCode, action, entityId, detail) {
+/** actor: the signed-in user ({ code, companyId, support }) or { code, companyId } for a failed sign-in. */
+export function audit(conn, actor, action, entityId, detail) {
   return conn.query(
-    'INSERT INTO audit_log (at, user_code, action, entity_id, detail) VALUES (?, ?, ?, ?, ?)',
-    [now(), userCode, action, entityId, detail == null ? null : JSON.stringify(detail)]
+    'INSERT INTO audit_log (company_id, at, user_code, action, entity_id, detail, support_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [actor.companyId ?? null, now(), actor.code, action, entityId, detail == null ? null : JSON.stringify(detail), actor.support?.id ?? null]
   );
 }
 
@@ -112,37 +113,43 @@ export function loanFromRow(r) {
   };
 }
 
-/** Loans with their payments and visits, filtered by officer or branch. */
-export async function loadLoans(conn, { officerCode, branch, loanId }) {
+/** One company's loans with their payments and visits, filtered by officer, branch or id. */
+export async function loadLoans(conn, { companyId, officerCode, branch, loanId }) {
+  if (!companyId) throw new Error('loadLoans needs a companyId');
   const [where, arg] = loanId
     ? ['l.id = ?', loanId]
     : officerCode
       ? ['l.officer_code = ?', officerCode]
       : ['l.branch = ?', branch];
-  const loans = (await conn.query(`SELECT l.* FROM loans l WHERE ${where} ORDER BY l.loan_no`, [arg])).map(loanFromRow);
+  const scope = `l.company_id = ? AND ${where}`;
+  const args = [companyId, arg];
+  const loans = (await conn.query(`SELECT l.* FROM loans l WHERE ${scope} ORDER BY l.loan_no`, args)).map(loanFromRow);
   const byId = new Map(loans.map((l) => [l.id, l]));
   if (!loans.length) return loans;
   const payments = await conn.query(
-    `SELECT p.* FROM payments p JOIN loans l ON l.id = p.loan_id WHERE ${where} ORDER BY p.recorded_at`, [arg]);
+    `SELECT p.* FROM payments p JOIN loans l ON l.id = p.loan_id WHERE ${scope} ORDER BY p.recorded_at`, args);
   for (const r of payments) byId.get(r.loan_id).payments.push(paymentFromRow(r));
   const visits = await conn.query(
-    `SELECT v.* FROM visits v JOIN loans l ON l.id = v.loan_id WHERE ${where} ORDER BY v.recorded_at`, [arg]);
+    `SELECT v.* FROM visits v JOIN loans l ON l.id = v.loan_id WHERE ${scope} ORDER BY v.recorded_at`, args);
   for (const r of visits) byId.get(r.loan_id).visits.push(visitFromRow(r));
   return loans;
 }
 
-/** Inserts or updates a loan (used by the loan import and demo seed). */
-export function upsertLoan(conn, loan, importId = null) {
+/** Inserts or updates a company's loan (used by the loan import and demo seed). */
+export async function upsertLoan(conn, companyId, loan, importId = null) {
+  // Loan ids are global; never let one company's upsert land on another company's row.
+  const [owner] = await conn.query('SELECT company_id FROM loans WHERE id = ?', [loan.id]);
+  if (owner && owner.company_id !== companyId) throw new Error(`Loan id ${loan.id} belongs to another company.`);
   return conn.query(
-    `INSERT INTO loans (id, loan_no, branch, officer_code, product, principal, emi, disbursed_on, borrower, installments,
+    `INSERT INTO loans (company_id, id, loan_no, branch, officer_code, product, principal, emi, disbursed_on, borrower, installments,
        follow_up_date, created_at, updated_at, import_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE loan_no = VALUES(loan_no), branch = VALUES(branch), officer_code = VALUES(officer_code),
        product = VALUES(product), principal = VALUES(principal), emi = VALUES(emi), disbursed_on = VALUES(disbursed_on),
        borrower = VALUES(borrower), installments = VALUES(installments), updated_at = VALUES(updated_at),
        import_id = VALUES(import_id)`,
     [
-      loan.id, loan.loanNo, loan.branch, loan.officerCode || null, loan.product, loan.principal, loan.emi,
+      companyId, loan.id, loan.loanNo, loan.branch, loan.officerCode || null, loan.product, loan.principal, loan.emi,
       loan.disbursedOn, JSON.stringify(loan.borrower), JSON.stringify(loan.installments), loan.followUpDate || null,
       now(), now(), importId,
     ]

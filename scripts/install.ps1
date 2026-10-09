@@ -5,14 +5,14 @@
 
 .DESCRIPTION
   Installs Node.js LTS and MariaDB with winget (if missing), creates the database and its user,
-  copies the app to C:\LoanRecovery, creates the first admin, and runs the server in the background
+  copies the app to C:\LoanRecovery, creates the first admin and overlord accounts, and runs the server in the background
   at every start-up (Windows scheduled task, restarted automatically if it stops).
   Safe to re-run: it updates the code and keeps the existing database, data and passwords.
 
   Run in PowerShell **as Administrator**, from the project folder:
     powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Demo
 
-.PARAMETER Demo            Load demo officers and loans (only into an empty database).
+.PARAMETER Demo            Load demo officers and loans into the DataHaat test company (only if it has no users yet).
 .PARAMETER Public          Listen on the network (opens the Windows firewall port) - for testing from phones on your Wi-Fi.
 .PARAMETER AppDir          Install folder (default C:\LoanRecovery). Pass the project folder itself to run the app in place.
 .PARAMETER Port            HTTP port (default 8080).
@@ -20,6 +20,7 @@
 .PARAMETER DbPort          Port of the MariaDB server to use, if several are installed (default 3306).
 .PARAMETER DbRootPassword  MariaDB root password, if MariaDB was already installed before (you are asked if needed).
 .PARAMETER ResetRootPassword  Forgotten the MariaDB root password? Sets a new one (saved in credentials.txt); data is kept.
+.PARAMETER OverlordEmail   Sign-in email for the /overlord/ platform console (default owner@loandesk.local).
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '', Justification = 'Passwords go to the MariaDB client as text; normally entered via a hidden prompt.')]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Installer script, not a module.')]
@@ -32,7 +33,8 @@ param(
   [string]$DbName = 'loan_recovery',
   [int]$DbPort = 3306,
   [string]$DbRootPassword,
-  [switch]$ResetRootPassword
+  [switch]$ResetRootPassword,
+  [string]$OverlordEmail = 'owner@loandesk.local'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -392,42 +394,57 @@ try {
   & $Node server\admin.js migrate
   if ($LASTEXITCODE -ne 0) { Fail 'Database migration failed (see the message above).' }
 
-  # ---------------------------------------------------------------- first admin
-  $users = [int](Invoke-Sql 'SELECT COUNT(*) FROM users' $RootPass $DbName)
-  $AdminPass = $null
-  if ($Demo -and $users -eq 0) {
-    Step 'Loading demo data'
-    & $Node server\admin.js seed-demo | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail 'Loading demo data failed.' }
-    Write-Host "Demo branch 'Lucknow Rural': officers FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999), 12 loans"
+  # ---------------------------------------------------------------- first accounts
+  # Company 1 is BRMC (existing data), company 2 is DataHaat (in-house testing; -Demo fills it).
+  $AdminPass = $null; $DemoPass = $null; $OverlordPass = $null
+  $brmcAdmins = [int](Invoke-Sql "SELECT COUNT(*) FROM users WHERE company_id = 1 AND role = 'admin'" $RootPass $DbName)
+  if ($brmcAdmins -eq 0) {
+    Step 'Creating the BRMC admin account'
     $AdminPass = 'Lr' + (New-Secret 12) + (Get-Random -Minimum 10 -Maximum 99)
-    & $Node server\admin.js set-pin --code ADMIN --pin $AdminPass | Out-Null
-  } elseif ($Demo) {
-    Note 'Database already has users - demo data not loaded.'
-  }
-  $admins = [int](Invoke-Sql "SELECT COUNT(*) FROM users WHERE role = 'admin'" $RootPass $DbName)
-  if (-not $AdminPass -and $admins -eq 0) {
-    Step 'Creating the first admin account'
-    $AdminPass = 'Lr' + (New-Secret 12) + (Get-Random -Minimum 10 -Maximum 99)
-    & $Node server\admin.js add-user --code ADMIN --name Administrator --role admin --branch 'Head Office' --pin $AdminPass | Out-Null
+    & $Node server\admin.js add-user --company BRMC --code ADMIN --name Administrator --role admin --branch 'Head Office' --pin $AdminPass | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail 'Creating the admin account failed.' }
+  }
+  if ($Demo) {
+    $dhUsers = [int](Invoke-Sql "SELECT COUNT(*) FROM users u JOIN companies c ON c.id = u.company_id WHERE c.code = 'DATAHAAT'" $RootPass $DbName)
+    if ($dhUsers -eq 0) {
+      Step 'Loading demo data into DataHaat'
+      & $Node server\admin.js seed-demo --company DATAHAAT | Out-Null
+      if ($LASTEXITCODE -ne 0) { Fail 'Loading demo data failed.' }
+      $DemoPass = 'Lr' + (New-Secret 12) + (Get-Random -Minimum 10 -Maximum 99)
+      & $Node server\admin.js set-pin --company DATAHAAT --code ADMIN --pin $DemoPass | Out-Null
+    } else {
+      Note 'DataHaat already has users - demo data not loaded.'
+    }
+  }
+  $overlords = [int](Invoke-Sql 'SELECT COUNT(*) FROM overlords' $RootPass $DbName)
+  if ($overlords -eq 0) {
+    Step "Creating the overlord account ($OverlordEmail)"
+    $OverlordPass = 'Ov' + (New-Secret 14) + (Get-Random -Minimum 10 -Maximum 99)
+    & $Node server\admin.js add-overlord --email $OverlordEmail --name 'Platform owner' --password $OverlordPass | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail 'Creating the overlord account failed.' }
   }
 } finally { Pop-Location }
 
-# Credentials: keep earlier lines (e.g. root password) and add what is new.
+# Credentials: keep earlier lines (root password, earlier accounts) and add what is new.
 $cred = @()
 if (Test-Path $CredFile) { $cred = @(Get-Content $CredFile) }
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
 if ($newRootPass) { $cred = @($cred | Where-Object { $_ -notmatch '^MariaDB root password:' }) + "MariaDB root password: $newRootPass" }
 if ($AdminPass) {
-  $cred = @($cred | Where-Object { $_ -notmatch '^Admin (code|password):' -and $_ -notmatch '^Demo field logins' }) +
-    'Admin code: ADMIN' + "Admin password: $AdminPass"
-  if ($Demo) { $cred += 'Demo field logins: FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999)' }
+  $cred = @($cred | Where-Object { $_ -notmatch '^Admin (code|password):' }) +
+    "Admin console: http://localhost:$Port/admin/  -  company code BRMC, admin code ADMIN" + "Admin password: $AdminPass"
+}
+if ($DemoPass) {
+  $cred = @($cred | Where-Object { $_ -notmatch '^Demo ' }) +
+    "Demo company DATAHAAT: admin ADMIN, password $DemoPass" + 'Demo field logins (company DATAHAAT): FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999)'
+}
+if ($OverlordPass) {
+  $cred += "Overlord console: http://localhost:$Port/overlord/"
+  $cred += "Overlord email: $OverlordEmail"
+  $cred += "Overlord password: $OverlordPass   (first sign-in: scan the QR code with Google/Microsoft Authenticator)"
 }
 if ($cred.Count) {
-  $cred = @($cred | Where-Object { $_ -notmatch '^Admin console:' })
-  if ($cred.Count -and $cred[0] -match '^(Loan Recovery|LoanDesk)') { $cred = @($cred[0], "Admin console: http://localhost:$Port/admin/") + @($cred | Select-Object -Skip 1) }
-  if ($cred[0] -notmatch '^(Loan Recovery|LoanDesk)') { $cred = @("LoanDesk credentials - updated $stamp", "Admin console: http://localhost:$Port/admin/") + $cred }
+  if ($cred[0] -notmatch '^(Loan Recovery|LoanDesk)') { $cred = @("LoanDesk credentials - updated $stamp") + $cred }
   else { $cred[0] = "LoanDesk credentials - updated $stamp" }
   Write-TextFile $CredFile (($cred -join "`r`n") + "`r`n")
   Protect-File $CredFile
@@ -475,11 +492,14 @@ if ($Public) {
 }
 Write-Host "  App folder    : $AppDir   (settings in $envFile)"
 Write-Host "  Database      : $DbName on MariaDB ($($inst.Service), port $DbPort), user $DbUser"
-if ($AdminPass) {
-  Write-Host "  Admin login   : ADMIN / $AdminPass" -ForegroundColor Cyan
-  Write-Host "                  (also saved in $CredFile - change it after signing in)"
+Write-Host "  Overlord      : http://localhost:$Port/overlord/"
+if ($AdminPass) { Write-Host "  BRMC admin    : company BRMC, code ADMIN, password $AdminPass" -ForegroundColor Cyan }
+if ($DemoPass) { Write-Host "  Demo admin    : company DATAHAAT, code ADMIN, password $DemoPass" -ForegroundColor Cyan }
+if ($OverlordPass) { Write-Host "  Overlord      : $OverlordEmail / $OverlordPass" -ForegroundColor Cyan }
+if ($AdminPass -or $DemoPass -or $OverlordPass) {
+  Write-Host "                  (saved in $CredFile - change passwords after signing in)"
 } else {
-  Write-Host '  Admin login   : unchanged (existing admin accounts kept)'
+  Write-Host '  Accounts      : unchanged (existing admin and overlord accounts kept)'
 }
 Write-Host "  Server log    : $log"
 Write-Host "  Restart       : Stop-ScheduledTask $TaskName; Start-ScheduledTask $TaskName   (it also starts with Windows)"

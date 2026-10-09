@@ -47,7 +47,7 @@ export async function render(el, q, alive) {
         <thead><tr><th>When</th><th>User</th><th>Action</th><th>Subject</th><th>Details</th></tr></thead>
         <tbody>${data.rows.map((r) => `<tr>
           <td class="primary nowrap" data-label="When"><div class="cell-main">${dateTime(r.at)}</div></td>
-          <td data-label="User"><b>${esc(r.user_code || '—')}</b></td>
+          <td data-label="User"><b>${esc(r.user_code || '—')}</b>${r.support_name ? `<div class="cell-sub">LoanDesk support · ${esc(r.support_name)}</div>` : ''}</td>
           <td data-label="Action"${r.action.includes('fail') || r.action.includes('reject') ? ' style="color:var(--bad)"' : ''}>${esc(describe(r.action))}</td>
           <td data-label="Subject">${esc(r.entity_id || '—')}</td>
           <td data-label="Details">${details(r.detail)}</td></tr>`).join('')}</tbody>

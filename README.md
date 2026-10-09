@@ -4,15 +4,18 @@
 
 **LoanDesk** is a loan recovery app for field collection teams. It is planned to run at `https://loandesk.datahaat.com`. Internal names, such as the `loan_recovery` database, the `loan-recovery` service and the `/opt/loan-recovery` / `C:\LoanRecovery` folders, keep their original spelling so existing installs keep working.
 
-A loan collection system with three parts:
+LoanDesk is **multi-company**: each lending company is a separate workspace with its own staff, loans and audit trail, and no company can see another's data. It has four parts:
 
 | Part | Who | Where |
 |---|---|---|
 | **Field app**: installable phone app (PWA) | Field officers and supervisors | `https://loandesk.datahaat.com/` |
-| **Admin console**: responsive web console | Head office admins | `https://loandesk.datahaat.com/admin/` |
-| **Server**: Node.js API with a **MariaDB** database | | Serves both of the above |
+| **Admin console**: responsive web console | Each company's head-office admins | `https://loandesk.datahaat.com/admin/` |
+| **Overlord console**: platform console | The LoanDesk operator | `https://loandesk.datahaat.com/overlord/` |
+| **Server**: Node.js API with a **MariaDB** database | | Serves all of the above |
 
-No build step is needed. The app is plain HTML, CSS and JavaScript, and the server's only runtime dependencies are `mariadb` and `exceljs`.
+Staff sign in with their **company code** (for example `BRMC`), their user code and PIN or password. The company code may be left blank when the user code and PIN match only one person. Existing data belongs to company 1, **BRMC** (Bihar Risk Management Consultancy Private Limited). Company 2, **DATAHAAT**, is an in-house company for testing.
+
+No build step is needed. The app is plain HTML, CSS and JavaScript, and the server's only runtime dependencies are `mariadb`, `exceljs` and `qrcode-svg`.
 
 ## Quick install (Ubuntu / Debian)
 
@@ -23,7 +26,7 @@ git clone -b claude/eager-ride-t1oaiq https://github.com/systemkunal-pixel/sampl
 sudo bash ~/sampleone/scripts/install.sh --demo        # --demo adds sample data; leave it out for production
 ```
 
-At the end it prints the admin password, which is also saved in `/root/loan-recovery-credentials.txt` (readable by root only). Open `http://localhost:8080/admin/` and sign in as **ADMIN**.
+At the end it prints the new passwords: the BRMC admin, the overlord, and with `--demo` the DataHaat demo admin. They are also saved in `/root/loan-recovery-credentials.txt` (readable by root only). Open `http://localhost:8080/admin/` and sign in with company code **BRMC**, code **ADMIN**. Add `--overlord-email you@example.com` to choose the overlord's sign-in email (default `owner@loandesk.local`).
 
 - **HTTPS on a public server:** point your domain's DNS at the machine, open ports 80 and 443, then run `sudo bash ~/sampleone/scripts/install.sh --domain loandesk.datahaat.com`. Caddy obtains the certificate.
 - **Updating:** `git -C ~/sampleone pull && sudo bash ~/sampleone/scripts/install.sh`. The database, data and passwords are kept.
@@ -43,7 +46,7 @@ powershell -ExecutionPolicy Bypass -File C:\src\sampleone\scripts\install.ps1 -D
 ```
 
 - **Running from the cloned folder:** add `-AppDir` with the project folder itself, e.g. `-AppDir "E:\Code Works\LoanRecovery"`. The app then runs from there instead of being copied to `C:\LoanRecovery`, and `.env`, `credentials.txt` and `logs\` are git-ignored.
-- **Passwords:** the admin password and the MariaDB root password are printed at the end and saved in `C:\LoanRecovery\credentials.txt` (readable by Administrators only).
+- **Passwords:** the new passwords are printed at the end and saved in `C:\LoanRecovery\credentials.txt` (readable by Administrators only). That covers the BRMC admin, the overlord, the DataHaat demo admin with `-Demo`, and the MariaDB root password. `-Demo` now fills the **DataHaat** test company, never BRMC. Add `-OverlordEmail you@example.com` to choose the overlord's sign-in email.
 - **Testing from phones on your Wi-Fi:** add `-Public` to open the firewall port. Without HTTPS, phones can't use the camera, GPS or install the app.
 - **Updating:** `git -C C:\src\sampleone pull`, then run the same `install.ps1` command again. Data and passwords are kept.
 - **Logs and control:** the log is at `C:\LoanRecovery\logs\server.log`. Stop or start the server with `Stop-ScheduledTask LoanRecovery` / `Start-ScheduledTask LoanRecovery`.
@@ -79,6 +82,48 @@ powershell -ExecutionPolicy Bypass -File C:\src\sampleone\scripts\install.ps1 -D
   - export the list to CSV.
 - **Import loans:** upload Excel (.xlsx), CSV or JSON, then review the result before anything is saved (new or updated loans, warnings, and errors with row numbers), download an error report, and confirm. Import history is kept, and a downloadable Excel template is included.
 - **Audit log:** every sign-in (and failed attempt), user change, PIN reset, import, reassignment and deposit decision.
+
+**Overlord** (overlord console, email + password + authenticator app)
+- **Overview:** every company with its status, plan, officers, active loans, outstanding, PAR 30, collections in the last 30 days, features in use and last activity.
+- **Companies:**
+  - Create a company with its first admin.
+  - Edit its name, contact, plan and field-officer limit.
+  - Add an admin or set a new admin password when they're locked out.
+  - Load demo data into an empty company.
+  - **Lock sign-in** (e.g. unpaid invoice): everyone is signed out, data is untouched, and support can still enter.
+  - **Archive** a company that has left: off the overview, sign-in refused, nothing deleted. **Unlock** or **Reopen** with one click.
+  - A reason is required to lock or archive, and companies with the same name are flagged.
+- **Support access:** enter a company's admin console as **LoanDesk support** with a typed reason. A red banner shows throughout, the session ends after 45 minutes, and **Exit** is one click away. Every action is recorded in that company's audit log under `SUPPORT` with the overlord's name. **Support sessions** lists every entry: who, where, why, start and end, IP, and what was changed.
+- **Plans & features:** a matrix of what Regular, Pro and Enterprise include, and their field-officer limits. Per-company overrides force one feature on or off and survive plan changes. A feature that is switched off is hidden in the apps and refused by the server.
+- **Overlord accounts** and the append-only **Overlord audit log**, which records every action in the console, including failed sign-ins.
+
+## Multi-company and the overlord console
+
+The design follows the MESA POS overlord and closes the gaps listed in its own write-up:
+
+- **Two-factor sign-in is required.** The overlord signs in at `/overlord/` (a separate page from company admins) with email and password, then a 6-digit code from Google Authenticator, Microsoft Authenticator or Authy. The app is enrolled by QR code at the first sign-in. A code can't be reused, five wrong codes end the attempt, and the session ends after 60 minutes idle, 12 hours in total, or when the browser closes.
+- **Everything is audited in one place.** Company lifecycle, plan and override changes, support sessions, overlord accounts and failed sign-ins are all written to `overlord_audit`.
+- **Support actions are attributed.** Work done during support access is recorded as `SUPPORT` together with the overlord's name, not as the customer's own admin.
+- **Overlords are separate.** They live in their own table and are never listed in any company.
+
+**Plans.** The defaults are:
+- **Regular:** collections, visits and loan import, up to 10 field officers.
+- **Pro:** adds bank deposits with supervisor verification, CSV export and the audit log screen, up to 50 field officers.
+- **Enterprise:** everything, with no officer limit.
+
+Change any of these under **Plans & features**. BRMC and DataHaat start on Enterprise.
+
+**Email notifications** (telling a company that support entered) need an SMTP account, which isn't set up yet. The console shows the option as unavailable, and every session is still logged.
+
+Server commands for the overlord:
+
+```bash
+npm run admin -- add-overlord --email you@example.com --name "Your Name" --password '12+ chars with digits'
+npm run admin -- overlord-password --email you@example.com --password '…'   # forgotten password
+npm run admin -- overlord-reset-2fa --email you@example.com                 # lost phone: enrol again at next sign-in
+npm run admin -- list-overlords
+npm run admin -- list-companies
+```
 
 ## Brand assets
 
@@ -126,16 +171,17 @@ mariadb -e "CREATE DATABASE loan_recovery CHARACTER SET utf8mb4 COLLATE utf8mb4_
 cp .env.example .env            # set DB_PASSWORD (and DB_HOST if MariaDB is on another machine)
 npm ci --omit=dev
 
-# 3. First admin (tables are created automatically)
-npm run admin -- add-user --code ADMIN --name "Your Name" --role admin --branch "Head Office" --pin 'A-strong-pass1'
+# 3. First admin and overlord (tables, BRMC and DATAHAAT are created automatically)
+npm run admin -- add-user --company BRMC --code ADMIN --name "Your Name" --role admin --branch "Head Office" --pin 'A-strong-pass1'
+npm run admin -- add-overlord --email you@example.com --name "Your Name" --password 'A-strong-overlord-pass1'
 
 # 4. Start
-npm start                       # http://localhost:8080   ·   console at /admin/
+npm start                       # http://localhost:8080   ·   /admin/   ·   /overlord/
 ```
 
-Sign in to `/admin/`, create officers and supervisors, then import your loans. To try everything with sample data on an empty database instead, run `npm run admin -- seed-demo`. It creates FO27 / FO31 (PIN 1234), SUP1 (PIN 9999) and ADMIN (password `Demo@Admin2026`). **Don't** run it on a production database.
+Sign in to `/admin/` with company code `BRMC`, create officers and supervisors, then import your loans. To try everything with sample data, run `npm run admin -- seed-demo --company DATAHAAT`, or use **Load demo data** on an empty company in the overlord console. This fills the company with FO27 / FO31 (PIN 1234), SUP1 (PIN 9999) and ADMIN (password `Demo@Admin2026`); it only runs on a company with no users or loans.
 
-Command-line equivalents: `npm run admin -- add-user | set-pin | deactivate | list-users | import-loans <file> | migrate`.
+Command-line equivalents: `npm run admin -- add-user | set-pin | deactivate | list-users | import-loans <file> | seed-demo | migrate`. The user and import commands take `--company CODE`.
 
 ### Moving to another MariaDB server
 
@@ -167,7 +213,9 @@ HTTPS is required: phones only allow the camera, GPS, offline mode and installin
 - Every input is validated on the server. Officers can only record against loans assigned to them, and supervisors only see their own branch.
 - Slip files are checked by their actual file contents (they must really be JPEG, PNG, WebP or PDF).
 - Pages are served with a strict Content-Security-Policy, `X-Frame-Options: DENY` and `nosniff`. CSV exports are protected against formula injection.
-- Every administrative action is written to `audit_log`.
+- Every administrative action is written to `audit_log`, which is kept per company. Overlord actions go to `overlord_audit`.
+- **Company isolation:** every query is scoped to the signed-in user's company. Loan, payment and slip ids are checked to belong to that company before anything is read or written, and slip numbers are unique within a company. Tests cover cross-company reads and writes.
+- **Overlord sign-in** needs a password of 12+ characters plus an authenticator code; see the multi-company section above. A locked or archived company's sessions end at once.
 
 ## API
 
@@ -175,7 +223,8 @@ All endpoints except `login` and `health` need `Authorization: Bearer <token>`.
 
 | Endpoint | Role | Purpose |
 |---|---|---|
-| `POST /api/login` `{code, pin}` · `POST /api/logout` | all | Sessions |
+| `POST /api/login` `{company, code, pin}` · `POST /api/logout` · `GET /api/me` | all | Sessions; `me` returns the user, company and plan features |
+| `POST /api/support/end` | support session | Ends a support session (the banner's Exit) |
 | `GET /api/bootstrap` | officer, supervisor | The officer's loans (or a supervisor's branch) with history |
 | `POST /api/records` | officer | Payments and visits. Idempotent per record ID |
 | `GET /api/slips/:paymentId` | officer (own), supervisor (branch), admin | Deposit slip |
@@ -185,16 +234,24 @@ All endpoints except `login` and `health` need `Authorization: Bearer <token>`.
 | `GET /api/admin/loans` · `GET/PATCH /api/admin/loans/:id` · `POST /api/admin/loans/assign` · `GET /api/admin/loans/export` | admin | Loans |
 | `GET /api/admin/import/template` · `POST /api/admin/import/preview` · `POST /api/admin/import/commit` · `GET /api/admin/imports` | admin | Import |
 | `GET /api/admin/audit` · `POST /api/admin/me/password` · `GET /api/admin/branches` | admin | Audit, own password, branch list |
+| `POST /api/overlord/login` · `POST /api/overlord/login/verify` · `POST /api/overlord/logout` · `GET /api/overlord/me` | overlord | Two-step sign-in (password, then authenticator code) |
+| `GET /api/overlord/overview` · `GET/POST /api/overlord/companies` · `GET/PATCH /api/overlord/companies/:id` · `POST …/:id/status` · `POST …/:id/admins` · `POST …/:id/demo` | overlord | Companies |
+| `POST /api/overlord/companies/:id/support` · `GET /api/overlord/support-sessions` · `POST …/support-sessions/:id/end` | overlord | Support access |
+| `GET /api/overlord/plans` · `PUT /api/overlord/plans/:plan` · `PUT /api/overlord/companies/:id/overrides` | overlord | Plans and overrides |
+| `GET/POST /api/overlord/overlords` · `PATCH …/overlords/:id` · `POST …/:id/reset-authenticator` · `GET /api/overlord/audit` | overlord | Overlord accounts and audit |
 
 ## Project layout
 
 ```
 src/                  field app (PWA)
   admin/              admin console: index.html, admin.css, js/main.js, js/views/*.js
+  overlord/           overlord console (reuses the admin console's styles and UI helpers)
 server/
   index.js            entry point            app.js        routes, static hosting, headers
   admin-api.js        admin endpoints        importer.js   Excel/CSV/JSON parsing, validation, template
   records.js          officer record intake  auth.js       PINs, sessions, throttling
+  overlord-api.js     overlord endpoints     plans.js      plan matrix and feature checks
+  totp.js             authenticator codes (RFC 6238)
   db.js schema.sql    MariaDB                admin.js      admin command-line tool
 deploy/               nginx, Caddy and systemd files
 tests/                node:test suites

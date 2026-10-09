@@ -109,10 +109,10 @@ code { font: .85em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; bac
   border-right: 1px solid var(--border);
   transition: transform .2s ease;
 }
-.brand { display: flex; align-items: center; gap: 10px; height: var(--topbar); padding: 0 18px; border-bottom: 1px solid var(--border); }
-.brand img { width: 30px; height: 30px; border-radius: 8px; }
-.brand b { font-size: .98rem; }
-.brand small { display: block; color: var(--muted); font-size: .72rem; font-weight: 500; letter-spacing: .02em; }
+.sidebar .brand { display: flex; align-items: center; gap: 10px; height: var(--topbar); padding: 0 18px; border-bottom: 1px solid var(--border); }
+.sidebar .brand img { width: 30px; height: 30px; border-radius: 8px; }
+.sidebar .brand b { font-size: .98rem; }
+.sidebar .brand small { display: block; color: var(--muted); font-size: .72rem; font-weight: 500; letter-spacing: .02em; }
 .nav { padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; }
 .nav-label { padding: 14px 10px 6px; font-size: .7rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .nav a {
@@ -548,4 +548,27 @@ dialog.dlg::backdrop { background: rgb(10 16 13 / .5); }
   #print-area h3 { font-size: 12.5pt; margin: 10pt 0 2pt; }
   #print-area .help-steps li::before { background: #000; color: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   #print-area .help-tips { background: #f2f2f2; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
+/* ---------- plan features and support sessions ---------- */
+/* Anything marked data-needs="feature" disappears when the company's plan doesn't include it. */
+body[data-off~="loan_import"] [data-needs~="loan_import"],
+body[data-off~="loan_export"] [data-needs~="loan_export"],
+body[data-off~="audit_log"] [data-needs~="audit_log"],
+body[data-off~="bank_deposits"] [data-needs~="bank_deposits"] { display: none !important; }
+
+.support-banner {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+  display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 16px;
+  color: #fff; font-size: .88rem; line-height: 1.35;
+  background: repeating-linear-gradient(135deg, #a3202e 0 14px, #8d1a26 14px 28px);
+  box-shadow: 0 -4px 16px rgb(0 0 0 / .2);
+}
+.support-banner > span { flex: 1; min-width: 0; }
+.support-banner .btn { background: #fff; color: #8d1a26; border-color: #fff; font-weight: 650; }
+.shell.with-banner { padding-bottom: 72px; }
+.shell.with-banner .sidebar { bottom: 52px; }
+@media (max-width: 760px) {
+  .shell.with-banner { padding-bottom: 110px; }
+  .shell.with-banner .sidebar { bottom: 88px; }
 }

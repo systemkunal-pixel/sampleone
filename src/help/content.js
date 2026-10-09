@@ -50,8 +50,9 @@ export const TOPICS = [
   {
     id: 'sign-in', category: 'start', audience: FIELD,
     title: 'Sign in and sign out',
-    summary: 'Log in with your code and PIN; when you can and cannot log out.',
+    summary: 'Log in with your company code, your code and PIN; when you can and cannot log out.',
     steps: [
+      'Enter your <b>company code</b> (for example BRMC — your admin gives it to you). The phone remembers it for next time.',
       'Enter your <b>officer / supervisor code</b> (for example FO27) and your <b>PIN</b>, then tap <b>Log in</b>.',
       'You stay signed in for 30 days on that phone. If your session expires, sign in again — nothing you saved is lost.',
       'To sign out: <b>Settings → Log out</b>.',
@@ -60,6 +61,7 @@ export const TOPICS = [
       'You cannot log out while records are still waiting to be sent. Get signal, wait for the header to show <b>● Live</b>, then log out.',
       'Five wrong PINs lock your code for 15 minutes.',
       'Forgot your PIN? Ask your admin to reset it — they will give you a new one.',
+      'If the app says <b>“Enter your company code as well”</b>, type the company code: the same officer code exists in another company on LoanDesk.',
     ],
   },
   {
@@ -88,11 +90,11 @@ export const TOPICS = [
     title: 'First-day setup for admins',
     summary: 'The order to set things up so officers can start the same day.',
     steps: [
-      'Sign in to the admin console and <b>change your password</b> (account menu, top right).',
+      'Sign in to the admin console with your <b>company code</b>, admin code and password, then <b>change your password</b> (account menu, top right).',
       'Add your <b>supervisors</b> and <b>field officers</b> under <b>Users</b>, each with the correct branch. Write down the PINs the console shows.',
       'Download the <b>Excel template</b> under <b>Import loans</b>, or export your loan system’s file, and <b>import your loans</b>.',
       'Open <b>Loans</b>, filter <b>Unassigned</b>, select them and <b>assign</b> each group to an officer of that branch.',
-      'Send each officer the app address, their code and PIN, and the guide <b>Install the app on a phone</b>.',
+      'Send each officer the app address, your <b>company code</b>, their code and PIN, and the guide <b>Install the app on a phone</b>.',
       'Check the <b>Dashboard</b> next morning: collections and visits should start appearing.',
     ],
     tips: ['The dashboard shows a <b>Getting started</b> checklist that ticks itself off as you complete these steps.'],
@@ -504,10 +506,30 @@ export const TOPICS = [
     body: '<p>Officers see only loans assigned to them. In the admin console open <b>Loans</b>, search for the loan and check the officer. After assigning, the phone shows it within a minute (or tap Settings → Refresh from server).</p>',
   },
   {
+    id: 'loandesk-support', category: 'faq', audience: ['admin'],
+    title: 'When LoanDesk support works in your account',
+    summary: 'The red support banner, what support can do, and how it is recorded.',
+    body: `
+      <p>If you ask LoanDesk for help, a support person may open your admin console to look at the problem with you.</p>
+      <ul>
+        <li>While they are inside, a <b>red striped banner</b> runs along the bottom of their screen. Each visit lasts at most 45 minutes.</li>
+        <li>They act as <b>SUPPORT</b>. Every change they make appears in your <b>Audit log</b> under the code SUPPORT, with the support person’s name.</li>
+        <li>Support never needs your password and never asks for it. Don’t share passwords or PINs with anyone, including LoanDesk.</li>
+      </ul>`,
+  },
+  {
+    id: 'faq-not-in-plan', category: 'faq', audience: ALL,
+    title: '“This feature isn’t included in your plan”',
+    summary: 'Some features depend on your company’s LoanDesk plan.',
+    body: `<p>Bank deposits, CSV export, the audit log screen and loan import can be switched on or off for your company by LoanDesk,
+      depending on your plan. When a feature is off its button or menu item is hidden. To get it, contact LoanDesk to change your plan.
+      The plan also sets how many field officers can be active at once.</p>`,
+  },
+  {
     id: 'faq-session-expired', category: 'faq', audience: ALL,
     title: '“Your session has expired”',
     summary: 'Sign in again — nothing is lost.',
-    body: '<p>Sessions last 30 days on phones and 12 hours in the admin console, and end when a PIN is reset or a user is deactivated. Sign in again; records saved on the phone are kept and sent after you sign in.</p>',
+    body: '<p>Sessions last 30 days on phones and 12 hours in the admin console, and end when a PIN is reset, a user is deactivated, or LoanDesk locks your company’s sign-in. Sign in again; records saved on the phone are kept and sent after you sign in. If sign-in says your company is locked, your admin should contact LoanDesk.</p>',
   },
   {
     id: 'faq-import-headings', category: 'faq', audience: ['admin'],

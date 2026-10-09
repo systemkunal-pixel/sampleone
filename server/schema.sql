@@ -120,3 +120,135 @@ CREATE TABLE IF NOT EXISTS imports (
   skipped     INT UNSIGNED NOT NULL,
   KEY ix_imports_at (at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- v3: multi-company (each lending company is an isolated workspace) and the overlord console.
+CREATE TABLE IF NOT EXISTS companies (
+  id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code           VARCHAR(12)  NOT NULL,
+  name           VARCHAR(150) NOT NULL,
+  plan           ENUM('regular', 'pro', 'enterprise') NOT NULL DEFAULT 'regular',
+  max_officers   INT UNSIGNED NULL COMMENT 'overrides the plan limit when set',
+  status         ENUM('active', 'locked', 'archived') NOT NULL DEFAULT 'active',
+  status_reason  VARCHAR(300) NULL,
+  status_at      DATETIME     NULL,
+  status_by      VARCHAR(190) NULL,
+  contact_name   VARCHAR(100) NULL,
+  contact_email  VARCHAR(190) NULL,
+  contact_phone  VARCHAR(20)  NULL,
+  created_at     DATETIME     NOT NULL,
+  UNIQUE KEY uq_companies_code (code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- First run of v3: existing data belongs to company 1, plus an empty in-house company for testing.
+-- created_at is India time here (the app's default zone), since NOW() follows the database server's zone.
+INSERT INTO companies (id, code, name, plan, created_at)
+  SELECT 1, 'BRMC', 'Bihar Risk Management Consultancy Private Limited', 'enterprise', CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30') FROM DUAL
+  WHERE NOT EXISTS (SELECT 1 FROM companies);
+INSERT INTO companies (id, code, name, plan, created_at)
+  SELECT 2, 'DATAHAAT', 'DataHaat', 'enterprise', CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30') FROM DUAL
+  WHERE (SELECT COUNT(*) FROM companies) = 1 AND NOT EXISTS (SELECT 1 FROM companies WHERE code = 'DATAHAAT');
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id INT UNSIGNED NOT NULL DEFAULT 1 AFTER id;
+ALTER TABLE users MODIFY company_id INT UNSIGNED NOT NULL;
+ALTER TABLE users ADD UNIQUE KEY IF NOT EXISTS uq_users_company_code (company_id, code);
+ALTER TABLE users DROP INDEX IF EXISTS uq_users_code;
+
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS company_id INT UNSIGNED NOT NULL DEFAULT 1 AFTER id;
+ALTER TABLE loans MODIFY company_id INT UNSIGNED NOT NULL;
+ALTER TABLE loans ADD UNIQUE KEY IF NOT EXISTS uq_loans_company_loan_no (company_id, loan_no);
+ALTER TABLE loans ADD KEY IF NOT EXISTS ix_loans_company_officer (company_id, officer_code);
+ALTER TABLE loans ADD KEY IF NOT EXISTS ix_loans_company_branch (company_id, branch);
+ALTER TABLE loans DROP INDEX IF EXISTS uq_loans_loan_no;
+
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS company_id INT UNSIGNED NOT NULL DEFAULT 1 AFTER id;
+ALTER TABLE payments MODIFY company_id INT UNSIGNED NOT NULL;
+ALTER TABLE payments ADD UNIQUE KEY IF NOT EXISTS uq_payments_company_slip (company_id, slip_key);
+ALTER TABLE payments ADD KEY IF NOT EXISTS ix_payments_company_time (company_id, recorded_at);
+ALTER TABLE payments DROP INDEX IF EXISTS uq_payments_slip_key;
+
+ALTER TABLE imports ADD COLUMN IF NOT EXISTS company_id INT UNSIGNED NOT NULL DEFAULT 1 AFTER id;
+ALTER TABLE imports MODIFY company_id INT UNSIGNED NOT NULL;
+ALTER TABLE imports ADD KEY IF NOT EXISTS ix_imports_company (company_id, id);
+
+-- NULL company: a failed sign-in that matched no company.
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS company_id INT UNSIGNED NULL DEFAULT 1 AFTER id;
+ALTER TABLE audit_log MODIFY company_id INT UNSIGNED NULL DEFAULT NULL;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS support_id BIGINT UNSIGNED NULL;
+ALTER TABLE audit_log ADD KEY IF NOT EXISTS ix_audit_company (company_id, id);
+
+-- Support sessions have no user row: they act as a virtual admin of the company.
+ALTER TABLE sessions MODIFY user_id INT UNSIGNED NULL;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS company_id INT UNSIGNED NULL;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS support_id BIGINT UNSIGNED NULL;
+
+CREATE TABLE IF NOT EXISTS overlords (
+  id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  email          VARCHAR(190) NOT NULL,
+  name           VARCHAR(100) NOT NULL,
+  password_hash  VARCHAR(200) NOT NULL,
+  totp_secret    VARCHAR(64)  NULL,
+  totp_enabled   TINYINT(1)   NOT NULL DEFAULT 0,
+  totp_last_step BIGINT       NULL,
+  active         TINYINT(1)   NOT NULL DEFAULT 1,
+  created_at     DATETIME     NOT NULL,
+  last_login_at  DATETIME     NULL,
+  UNIQUE KEY uq_overlords_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS overlord_sessions (
+  token_hash   CHAR(64)     NOT NULL PRIMARY KEY,
+  overlord_id  INT UNSIGNED NOT NULL,
+  stage        ENUM('password', 'full') NOT NULL,
+  attempts     TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  created_at   DATETIME     NOT NULL,
+  expires_at   DATETIME     NOT NULL,
+  KEY ix_overlord_sessions_overlord (overlord_id),
+  CONSTRAINT fk_overlord_sessions FOREIGN KEY (overlord_id) REFERENCES overlords (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS support_sessions (
+  id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  overlord_id     INT UNSIGNED NOT NULL,
+  company_id      INT UNSIGNED NOT NULL,
+  reason          VARCHAR(300) NOT NULL,
+  started_at      DATETIME     NOT NULL,
+  expires_at      DATETIME     NOT NULL,
+  ended_at        DATETIME     NULL,
+  ip              VARCHAR(45)  NULL,
+  owner_notified  TINYINT(1)   NOT NULL DEFAULT 0,
+  KEY ix_support_company (company_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Append-only record of everything done from the overlord console.
+CREATE TABLE IF NOT EXISTS overlord_audit (
+  id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  at              DATETIME     NOT NULL,
+  overlord_id     INT UNSIGNED NULL,
+  overlord_email  VARCHAR(190) NULL,
+  action          VARCHAR(40)  NOT NULL,
+  company_id      INT UNSIGNED NULL,
+  detail          TEXT         NULL,
+  ip              VARCHAR(45)  NULL,
+  KEY ix_overlord_audit_at (at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Plan matrix: rows exist only where the overlord changed the built-in default.
+CREATE TABLE IF NOT EXISTS plans (
+  code          ENUM('regular', 'pro', 'enterprise') NOT NULL PRIMARY KEY,
+  max_officers  INT UNSIGNED NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+INSERT IGNORE INTO plans (code, max_officers) VALUES ('regular', 10), ('pro', 50), ('enterprise', NULL);
+
+CREATE TABLE IF NOT EXISTS plan_features (
+  plan     ENUM('regular', 'pro', 'enterprise') NOT NULL,
+  feature  VARCHAR(40) NOT NULL,
+  enabled  TINYINT(1)  NOT NULL,
+  PRIMARY KEY (plan, feature)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS company_feature_overrides (
+  company_id  INT UNSIGNED NOT NULL,
+  feature     VARCHAR(40)  NOT NULL,
+  enabled     TINYINT(1)   NOT NULL,
+  PRIMARY KEY (company_id, feature)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

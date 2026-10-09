@@ -51,12 +51,12 @@ function decodeSlip(slip) {
 }
 
 async function lockAssignedLoan(conn, user, loanId) {
-  const [row] = await conn.query('SELECT id, officer_code FROM loans WHERE id = ? FOR UPDATE', [loanId]);
+  const [row] = await conn.query('SELECT id, officer_code FROM loans WHERE id = ? AND company_id = ? FOR UPDATE', [loanId, user.companyId]);
   if (!row) reject('Account not found on the server.');
   if (row.officer_code !== user.code) reject('This account is not assigned to you.');
 }
 
-async function storePayment(conn, user, loanId, r, slip) {
+async function storePayment(conn, user, loanId, r, slip, features) {
   const amount = amountOf(r.amount);
   if (!PAYMENT_MODES.includes(r.mode)) reject('Unknown payment mode.');
   const at = sqlTs(r.at);
@@ -64,7 +64,8 @@ async function storePayment(conn, user, loanId, r, slip) {
   const reference = optStr(r.reference, 60);
   if (r.mode !== 'Cash' && r.mode !== BANK_DEPOSIT && !reference) reject(`${r.mode} reference is required.`);
 
-  const [loan] = await loadLoans(conn, { loanId });
+  if (r.mode === BANK_DEPOSIT && !features.bank_deposits) reject("Bank deposits aren't included in your company's LoanDesk plan.");
+  const [loan] = await loadLoans(conn, { companyId: user.companyId, loanId });
   const { outstanding } = loanStatus(loan, r.at.slice(0, 10));
   if (amount > outstanding) reject(`Amount exceeds the outstanding balance of ₹${outstanding}.`);
 
@@ -80,20 +81,20 @@ async function storePayment(conn, user, loanId, r, slip) {
 
   try {
     await conn.query(
-      `INSERT INTO payments (id, loan_id, recorded_at, amount, mode, reference, receipt_no, officer_code, location, received_at,
+      `INSERT INTO payments (company_id, id, loan_id, recorded_at, amount, mode, reference, receipt_no, officer_code, location, received_at,
          slip_no, slip_key, deposit_bank, deposit_date, verification)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        r.id, loanId, at, amount, r.mode, dep ? dep.slipNo : reference, receiptNo, user.code, location(r.location), now(),
+        user.companyId, r.id, loanId, at, amount, r.mode, dep ? dep.slipNo : reference, receiptNo, user.code, location(r.location), now(),
         dep?.slipNo ?? null, dep ? normaliseSlipNo(dep.slipNo) : null, dep?.bank ?? null, dep?.depositDate ?? null,
         dep ? 'pending' : null,
       ]
     );
   } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY' && /slip_key/.test(err.message)) {
+    if (err.code === 'ER_DUP_ENTRY' && /slip/.test(err.message)) {
       const [other] = await conn.query(
-        'SELECT l.loan_no FROM payments p JOIN loans l ON l.id = p.loan_id WHERE p.slip_key = ?',
-        [normaliseSlipNo(dep.slipNo)]
+        'SELECT l.loan_no FROM payments p JOIN loans l ON l.id = p.loan_id WHERE p.company_id = ? AND p.slip_key = ?',
+        [user.companyId, normaliseSlipNo(dep.slipNo)]
       );
       reject(`Slip ${dep.slipNo} is already recorded${other ? ` on ${other.loan_no}` : ''}.`);
     }
@@ -123,7 +124,7 @@ async function storeVisit(conn, user, loanId, r) {
  * Stores one outbox item. Idempotent: a record id already on the server returns 'duplicate',
  * so a phone that lost the response can safely resend.
  */
-export async function acceptRecord(pool, user, item) {
+export async function acceptRecord(pool, user, item, features = {}) {
   const r = item?.record;
   const id = r?.id;
   if (!ID.test(id || '') || !ID.test(item?.loanId || '') || !['payment', 'visit'].includes(item?.type)) {
@@ -135,13 +136,13 @@ export async function acceptRecord(pool, user, item) {
       await lockAssignedLoan(conn, user, item.loanId);
       const [existing] = await conn.query(`SELECT id FROM ${table} WHERE id = ?`, [id]);
       if (existing) return { id, status: 'duplicate' };
-      if (item.type === 'payment') await storePayment(conn, user, item.loanId, r, item.slip);
+      if (item.type === 'payment') await storePayment(conn, user, item.loanId, r, item.slip, features);
       else await storeVisit(conn, user, item.loanId, r);
       return { id, status: 'accepted' };
     });
   } catch (err) {
     if (err instanceof Rejected) {
-      await audit(pool, user.code, `reject_${item.type}`, id, { loanId: item.loanId, reason: err.message }).catch(() => {});
+      await audit(pool, user, `reject_${item.type}`, id, { loanId: item.loanId, reason: err.message }).catch(() => {});
       return { id, status: 'rejected', error: err.message };
     }
     throw err;

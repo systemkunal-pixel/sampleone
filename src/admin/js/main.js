@@ -1,4 +1,4 @@
-import { session, login, logout, api, setExpiredHandler } from './api.js';
+import { session, login, logout, api, me, adoptSupportToken, setExpiredHandler } from './api.js';
 import { esc, icon, initials, toast, dialog, closeDrawer } from './ui.js';
 import * as dashboard from './views/dashboard.js';
 import * as users from './views/users.js';
@@ -13,10 +13,30 @@ const PAGES = [
   { path: 'dashboard', label: 'Dashboard', icon: 'dashboard', view: dashboard },
   { path: 'users', label: 'Users', icon: 'users', view: users },
   { path: 'loans', label: 'Loans', icon: 'loans', view: loans },
-  { path: 'import', label: 'Import loans', icon: 'upload', view: importer },
-  { path: 'audit', label: 'Audit log', icon: 'audit', view: audit },
+  { path: 'import', label: 'Import loans', icon: 'upload', view: importer, needs: 'loan_import' },
+  { path: 'audit', label: 'Audit log', icon: 'audit', view: audit, needs: 'audit_log' },
   { path: 'help', label: 'Help & guides', icon: 'help', view: help },
 ];
+
+const COMPANY_KEY = 'loandesk:company';
+const rememberedCompany = () => {
+  try {
+    return localStorage.getItem(COMPANY_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+
+// Plan features and company for the signed-in admin, from /api/me. Elements with data-needs="feature"
+// are hidden by CSS when the company's plan doesn't include it.
+let context = null;
+export const features = () => context?.features || {};
+
+async function loadContext() {
+  context = await me();
+  const off = Object.entries(context.features).filter(([, on]) => !on).map(([k]) => k);
+  document.body.dataset.off = off.join(' ');
+}
 
 // ---------- login ----------
 
@@ -45,8 +65,12 @@ function renderLogin(message = '') {
             <p class="muted">Use your admin code and password.</p>
           </div>
           ${message ? `<div class="info-box">${esc(message)}</div>` : ''}
+          <label class="field"><span>Company code</span>
+            <input class="input" name="company" autocomplete="organization" autocapitalize="characters" maxlength="12" value="${esc(rememberedCompany())}" ${rememberedCompany() ? '' : 'autofocus'}>
+            <span class="hint">Given to you by LoanDesk, e.g. BRMC.</span>
+          </label>
           <label class="field"><span>Admin code</span>
-            <input class="input" name="code" required autocomplete="username" autocapitalize="characters" autofocus>
+            <input class="input" name="code" required autocomplete="username" autocapitalize="characters" ${rememberedCompany() ? 'autofocus' : ''}>
           </label>
           <label class="field"><span>Password</span>
             <div class="input-group">
@@ -76,7 +100,11 @@ function renderLogin(message = '') {
     btn.disabled = true;
     btn.textContent = 'Signing in…';
     try {
-      await login(form.code.value.trim(), form.pin.value);
+      const company = form.company.value.trim().toUpperCase();
+      await login(company, form.code.value.trim(), form.pin.value);
+      try {
+        localStorage.setItem(COMPANY_KEY, company);
+      } catch {}
       if (!location.hash || location.hash === '#/login') location.hash = '#/dashboard';
       route();
     } catch (ex) {
@@ -91,10 +119,43 @@ function renderLogin(message = '') {
 
 let pendingDeposits = null;
 
+function supportBanner(user) {
+  if (!user.support) return '';
+  return `<div class="support-banner" role="status">
+    ${icon('headset')}<span><b>Support session</b> · inside ${esc(user.company.name)} as LoanDesk support (${esc(user.support.overlordName)}) ·
+    everything you do is logged · ends in <b id="support-left">–</b></span>
+    <button class="btn sm" id="support-exit">Exit</button></div>`;
+}
+
+let supportTimer = null;
+function startSupportClock(user) {
+  clearInterval(supportTimer);
+  if (!user.support) return;
+  const end = Date.now() + user.support.secondsLeft * 1000;
+  const tick = () => {
+    const left = Math.max(0, end - Date.now());
+    const el = document.getElementById('support-left');
+    if (el) el.textContent = `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, '0')}`;
+    if (!left) {
+      clearInterval(supportTimer);
+      session.clear();
+      renderLogin('The support session has ended (45 minutes).');
+    }
+  };
+  tick();
+  supportTimer = setInterval(tick, 1000);
+  document.getElementById('support-exit').onclick = async () => {
+    clearInterval(supportTimer);
+    await logout();
+    renderLogin('Support session ended. You can close this tab.');
+  };
+}
+
 function renderShell() {
   const user = session.get().user;
   $root.innerHTML = `
-    <div class="shell" id="shell">
+    ${supportBanner(user)}
+    <div class="shell ${user.support ? 'with-banner' : ''}" id="shell">
       <aside class="sidebar" id="sidebar" aria-label="Main navigation">
         <div class="brand">
           <img src="../icons/icon-192.png" alt="">
@@ -110,7 +171,7 @@ function renderShell() {
           <div class="nav-label">Support</div>
           ${navLink(PAGES[5])}
         </nav>
-        <div class="sidebar-foot">Signed in as ${esc(user.code)}<br>Field app: <a href="../" target="_blank" rel="noopener">open</a></div>
+        <div class="sidebar-foot"><b>${esc(user.company.name)}</b><br>Company code ${esc(user.company.code)} · signed in as ${esc(user.code)}<br>Field app: <a href="../" target="_blank" rel="noopener">open</a></div>
       </aside>
       <div class="scrim" id="scrim" hidden></div>
       <div class="main">
@@ -120,11 +181,11 @@ function renderShell() {
           <details class="usermenu" id="usermenu">
             <summary aria-label="Account menu">
               <span class="avatar">${esc(initials(user.name))}</span>
-              <span class="who"><b>${esc(user.name)}</b><small>${esc(user.code)} · Administrator</small></span>
+              <span class="who"><b>${esc(user.name)}</b><small>${esc(user.code)} · ${esc(user.company.code)} · ${user.support ? 'Support' : 'Administrator'}</small></span>
               ${icon('chevronDown')}
             </summary>
             <div class="menu" role="menu">
-              <button type="button" data-menu="password" role="menuitem">${icon('lock')} Change password</button>
+              ${user.support ? '' : `<button type="button" data-menu="password" role="menuitem">${icon('lock')} Change password</button>`}
               <button type="button" data-menu="help" role="menuitem">${icon('help')} Help &amp; guides</button>
               <hr>
               <button type="button" data-menu="logout" role="menuitem">${icon('logout')} Sign out</button>
@@ -151,8 +212,10 @@ function renderShell() {
     if (!action) return;
     menu.open = false;
     if (action === 'logout') {
+      clearInterval(supportTimer);
+      const wasSupport = Boolean(user.support);
       await logout();
-      renderLogin('You have been signed out.');
+      renderLogin(wasSupport ? 'Support session ended. You can close this tab.' : 'You have been signed out.');
     }
     if (action === 'password') changePassword();
     if (action === 'help') location.hash = '#/help';
@@ -164,7 +227,7 @@ function renderShell() {
 
 function navLink(p) {
   const badge = p.path === 'dashboard' && pendingDeposits ? `<span class="count" title="Bank deposits awaiting supervisor verification">${pendingDeposits}</span>` : '';
-  return `<a href="#/${p.path}" data-path="${p.path}">${icon(p.icon)}<span>${p.label}</span>${badge}</a>`;
+  return `<a href="#/${p.path}" data-path="${p.path}" ${p.needs ? `data-needs="${p.needs}"` : ''}>${icon(p.icon)}<span>${p.label}</span>${badge}</a>`;
 }
 
 async function changePassword() {
@@ -192,11 +255,32 @@ let seq = 0;
 
 export async function route() {
   closeDrawer();
+  const handover = /^#support=([\w-]+)/.exec(location.hash);
+  if (handover) {
+    history.replaceState(null, '', '#/dashboard');
+    try {
+      await adoptSupportToken(decodeURIComponent(handover[1]));
+    } catch {
+      session.clear();
+      return renderLogin('That support link has expired. Start a new support session from the overlord console.');
+    }
+    document.getElementById('shell')?.remove();
+  }
   if (!session.get()) return renderLogin();
-  if (!document.getElementById('shell')) renderShell();
+  if (!document.getElementById('shell')) {
+    try {
+      await loadContext();
+    } catch (err) {
+      if (err.status === 401) return;
+      throw err;
+    }
+    session.set({ ...session.get(), user: context.user });
+    renderShell();
+    startSupportClock(context.user);
+  }
   const [pathPart, queryPart = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const page = PAGES.find((p) => p.path === pathPart.split('/')[0]);
-  if (!page) {
+  if (!page || (page.needs && !features()[page.needs])) {
     location.replace('#/dashboard');
     return;
   }

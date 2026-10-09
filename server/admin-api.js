@@ -1,6 +1,7 @@
 // Admin console API (/api/admin/*). Every route requires an admin session.
 import { loanStatus, isoDate, DPD_BUCKETS, toCSV } from '../src/js/logic.js';
-import { hashPin, validPin, pinRule, verifyPin } from './auth.js';
+import { hashPin, validPin, pinRule, verifyPin, SUPPORT_CODE } from './auth.js';
+import { companyEntitlements } from './plans.js';
 import { loadLoans, upsertLoan, withTx, audit, now } from './db.js';
 import { HttpError, send } from './http.js';
 import { readImportFile, normalise, checkAgainstDb, buildTemplate, ImportError, MAX_FILE_BYTES } from './importer.js';
@@ -20,9 +21,9 @@ function userRow(u) {
 }
 
 /** Loans with just enough payment data to compute dues, filtered in SQL. */
-async function portfolio(pool, { branch, officer, q, loanIds } = {}) {
-  const where = [];
-  const args = [];
+export async function portfolio(pool, companyId, { branch, officer, q, loanIds } = {}) {
+  const where = ['l.company_id = ?'];
+  const args = [companyId];
   if (branch) where.push('l.branch = ?'), args.push(branch);
   if (officer === '__none') where.push('l.officer_code IS NULL');
   else if (officer) where.push('l.officer_code = ?'), args.push(officer);
@@ -32,11 +33,11 @@ async function portfolio(pool, { branch, officer, q, loanIds } = {}) {
     args.push(like, like, like);
   }
   if (loanIds) where.push('l.id IN (?)'), args.push(loanIds.length ? loanIds : ['']);
-  const sql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const sql = `WHERE ${where.join(' AND ')}`;
   const rows = await pool.query(
     `SELECT l.id, l.loan_no, l.branch, l.officer_code, l.product, l.principal, l.emi, l.disbursed_on, l.borrower,
             l.installments, l.updated_at, u.name AS officer_name
-     FROM loans l LEFT JOIN users u ON u.code = l.officer_code ${sql}`, args);
+     FROM loans l LEFT JOIN users u ON u.company_id = l.company_id AND u.code = l.officer_code ${sql}`, args);
   const pays = await pool.query(
     `SELECT p.loan_id, p.amount, p.verification FROM payments p JOIN loans l ON l.id = p.loan_id ${sql}`, args);
   const byLoan = new Map();
@@ -75,17 +76,31 @@ function filterLoans(list, query) {
   return rows;
 }
 
-async function assertOfficer(conn, code, branch) {
-  const [o] = await conn.query("SELECT code, branch, active FROM users WHERE code = ? AND role = 'officer'", [code]);
+async function assertOfficer(conn, companyId, code, branch) {
+  const [o] = await conn.query("SELECT code, branch, active FROM users WHERE company_id = ? AND code = ? AND role = 'officer'", [companyId, code]);
   if (!o) throw new HttpError(400, `${code} is not a field officer.`);
   if (!o.active) throw new HttpError(400, `${code} is deactivated.`);
   if (branch && o.branch !== branch) throw new HttpError(400, `${code} belongs to ${o.branch}, not ${branch}.`);
   return o;
 }
 
-async function activeAdmins(conn) {
-  const [{ n }] = await conn.query("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1");
+async function activeAdmins(conn, companyId) {
+  const [{ n }] = await conn.query("SELECT COUNT(*) AS n FROM users WHERE company_id = ? AND role = 'admin' AND active = 1", [companyId]);
   return n;
+}
+
+/** Throws if one more active officer would exceed the company's plan limit. */
+async function assertOfficerSeat(conn, companyId) {
+  const { maxOfficers } = await companyEntitlements(conn, companyId);
+  if (maxOfficers == null) return;
+  const [{ n }] = await conn.query("SELECT COUNT(*) AS n FROM users WHERE company_id = ? AND role = 'officer' AND active = 1", [companyId]);
+  if (n >= maxOfficers) throw new HttpError(409, `Your plan allows ${maxOfficers} active field officers. Deactivate one or contact LoanDesk to upgrade.`);
+}
+
+const FEATURE_OFF = "This feature isn't included in your company's LoanDesk plan.";
+async function requireFeature(conn, companyId, feature) {
+  const { features } = await companyEntitlements(conn, companyId);
+  if (!features[feature]) throw new HttpError(403, FEATURE_OFF);
 }
 
 export function mountAdmin(router, { pool, authed, readJson }) {
@@ -96,19 +111,20 @@ export function mountAdmin(router, { pool, authed, readJson }) {
 
   // ---------- dashboard ----------
 
-  R('GET', '/summary', async () => {
-    const loans = await portfolio(pool);
-    const users = await pool.query('SELECT role, active, branch FROM users');
+  R('GET', '/summary', async ({ user }) => {
+    const cid = user.companyId;
+    const loans = await portfolio(pool, cid);
+    const users = await pool.query('SELECT role, active, branch FROM users WHERE company_id = ?', [cid]);
     const today = isoDate();
     const month = today.slice(0, 7);
     const [coll] = await pool.query(
       `SELECT COALESCE(SUM(IF(recorded_at >= ?, amount, 0)), 0) AS today, COALESCE(SUM(IF(recorded_at >= ?, 1, 0)), 0) AS todayCount,
               COALESCE(SUM(amount), 0) AS month, COUNT(*) AS monthCount
-       FROM payments WHERE recorded_at >= ? AND (verification IS NULL OR verification <> 'rejected')`,
-      [`${today} 00:00:00`, `${today} 00:00:00`, `${month}-01 00:00:00`]);
+       FROM payments WHERE company_id = ? AND recorded_at >= ? AND (verification IS NULL OR verification <> 'rejected')`,
+      [`${today} 00:00:00`, `${today} 00:00:00`, cid, `${month}-01 00:00:00`]);
     const pending = await pool.query(
       `SELECT l.branch, COUNT(*) AS n, SUM(p.amount) AS amount FROM payments p JOIN loans l ON l.id = p.loan_id
-       WHERE p.verification = 'pending' GROUP BY l.branch`);
+       WHERE p.company_id = ? AND p.verification = 'pending' GROUP BY l.branch`, [cid]);
     const branches = new Map();
     const branch = (name) => {
       if (!branches.has(name)) branches.set(name, { branch: name, loans: 0, outstanding: 0, overdue: 0, par30: 0, officers: 0, unassigned: 0, pendingDeposits: 0 });
@@ -134,7 +150,7 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     }
     for (const u of users) if (u.role === 'officer' && u.active) branch(u.branch).officers += 1;
     for (const p of pending) branch(p.branch).pendingDeposits = p.n;
-    const recent = await pool.query('SELECT at, user_code, action, entity_id FROM audit_log ORDER BY id DESC LIMIT 8');
+    const recent = await pool.query('SELECT at, user_code, action, entity_id FROM audit_log WHERE company_id = ? ORDER BY id DESC LIMIT 8', [cid]);
     const count = (role, act = 1) => users.filter((u) => u.role === role && u.active === act).length;
     return {
       users: { officers: count('officer'), supervisors: count('supervisor'), admins: count('admin'), inactive: users.filter((u) => !u.active).length },
@@ -148,17 +164,19 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     };
   });
 
-  R('GET', '/branches', async () => {
-    const rows = await pool.query('SELECT branch FROM users UNION SELECT branch FROM loans ORDER BY branch');
+  R('GET', '/branches', async ({ user }) => {
+    const rows = await pool.query('SELECT branch FROM users WHERE company_id = ? UNION SELECT branch FROM loans WHERE company_id = ? ORDER BY branch',
+      [user.companyId, user.companyId]);
     return { branches: rows.map((r) => r.branch) };
   });
 
   // ---------- users ----------
 
-  R('GET', '/users', async () => {
+  R('GET', '/users', async ({ user }) => {
     const rows = await pool.query(
-      `SELECT u.*, (SELECT COUNT(*) FROM loans l WHERE l.officer_code = u.code) AS loans
-       FROM users u ORDER BY u.active DESC, u.branch, FIELD(u.role, 'admin', 'supervisor', 'officer'), u.code`);
+      `SELECT u.*, (SELECT COUNT(*) FROM loans l WHERE l.company_id = u.company_id AND l.officer_code = u.code) AS loans
+       FROM users u WHERE u.company_id = ? ORDER BY u.active DESC, u.branch, FIELD(u.role, 'admin', 'supervisor', 'officer'), u.code`,
+      [user.companyId]);
     return { users: rows.map(userRow) };
   });
 
@@ -169,22 +187,24 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     const branch = str(b.branch);
     const role = str(b.role);
     if (!CODE.test(code)) throw new HttpError(400, 'Code must be 2–12 letters or digits.');
+    if (code === SUPPORT_CODE) throw new HttpError(400, `${SUPPORT_CODE} is reserved for LoanDesk support.`);
     if (name.length < 2 || name.length > 100) throw new HttpError(400, 'Enter the full name.');
     if (branch.length < 2 || branch.length > 100) throw new HttpError(400, 'Enter the branch.');
     if (!ROLES.includes(role)) throw new HttpError(400, 'Choose a role.');
     if (!validPin(b.pin, role)) throw new HttpError(400, pinRule(role));
-    const [dup] = await pool.query('SELECT code FROM users WHERE code = ?', [code]);
+    const [dup] = await pool.query('SELECT code FROM users WHERE company_id = ? AND code = ?', [user.companyId, code]);
     if (dup) throw new HttpError(409, `Code ${code} is already taken.`);
-    await pool.query('INSERT INTO users (code, name, role, branch, pin_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-      [code, name, role, branch, await hashPin(b.pin), now()]);
-    await audit(pool, user.code, 'user_created', code, { role, branch });
+    if (role === 'officer') await assertOfficerSeat(pool, user.companyId);
+    await pool.query('INSERT INTO users (company_id, code, name, role, branch, pin_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [user.companyId, code, name, role, branch, await hashPin(b.pin), now()]);
+    await audit(pool, user, 'user_created', code, { role, branch });
     return { ok: true };
   });
 
   R('PATCH', '/users/:code', async ({ req, params, user }) => {
     const b = await readJson(req);
     return withTx(pool, async (conn) => {
-      const [u] = await conn.query('SELECT * FROM users WHERE code = ? FOR UPDATE', [params.code]);
+      const [u] = await conn.query('SELECT * FROM users WHERE company_id = ? AND code = ? FOR UPDATE', [user.companyId, params.code]);
       if (!u) throw new HttpError(404, 'User not found.');
       const next = {
         name: b.name !== undefined ? str(b.name) : u.name,
@@ -197,10 +217,12 @@ export function mountAdmin(router, { pool, authed, readJson }) {
       if (!ROLES.includes(next.role)) throw new HttpError(400, 'Choose a role.');
       const self = u.code === user.code;
       if (self && (next.role !== 'admin' || !next.active)) throw new HttpError(400, "You can't remove your own admin access.");
-      if (u.role === 'admin' && u.active && (next.role !== 'admin' || !next.active) && (await activeAdmins(conn)) <= 1) {
+      if (u.role === 'admin' && u.active && (next.role !== 'admin' || !next.active) && (await activeAdmins(conn, user.companyId)) <= 1) {
         throw new HttpError(400, 'There must be at least one active admin.');
       }
-      const [{ loans }] = await conn.query('SELECT COUNT(*) AS loans FROM loans WHERE officer_code = ?', [u.code]);
+      const [{ loans }] = await conn.query('SELECT COUNT(*) AS loans FROM loans WHERE company_id = ? AND officer_code = ?', [user.companyId, u.code]);
+      const becomesOfficer = next.role === 'officer' && next.active && !(u.role === 'officer' && u.active);
+      if (becomesOfficer) await assertOfficerSeat(conn, user.companyId);
       const leavesPost = next.role !== 'officer' || next.branch !== u.branch || !next.active;
       if (u.role === 'officer' && loans > 0 && leavesPost) {
         throw new HttpError(409, `${u.code} still has ${loans} assigned loan(s). Reassign them first.`);
@@ -218,29 +240,30 @@ export function mountAdmin(router, { pool, authed, readJson }) {
         await conn.query('DELETE FROM sessions WHERE user_id = ?', [u.id]);
       }
       const changes = Object.fromEntries(Object.entries(next).filter(([k, v]) => String(v) !== String(k === 'active' ? Boolean(u.active) : u[k])));
-      await audit(conn, user.code, next.active === Boolean(u.active) ? 'user_updated' : next.active ? 'user_activated' : 'user_deactivated', u.code, changes);
+      await audit(conn, user, next.active === Boolean(u.active) ? 'user_updated' : next.active ? 'user_activated' : 'user_deactivated', u.code, changes);
       return { ok: true };
     });
   });
 
   R('POST', '/users/:code/reset-pin', async ({ req, params, user }) => {
     const { pin } = await readJson(req);
-    const [u] = await pool.query('SELECT id, role FROM users WHERE code = ?', [params.code]);
+    const [u] = await pool.query('SELECT id, role FROM users WHERE company_id = ? AND code = ?', [user.companyId, params.code]);
     if (!u) throw new HttpError(404, 'User not found.');
     if (!validPin(pin, u.role)) throw new HttpError(400, pinRule(u.role));
     await pool.query('UPDATE users SET pin_hash = ?, updated_at = ? WHERE id = ?', [await hashPin(pin), now(), u.id]);
     await pool.query('DELETE FROM sessions WHERE user_id = ?', [u.id]);
-    await audit(pool, user.code, 'pin_reset', params.code, null);
+    await audit(pool, user, 'pin_reset', params.code, null);
     return { ok: true };
   });
 
   R('POST', '/me/password', async ({ req, user }) => {
     const { current, next } = await readJson(req);
-    const [u] = await pool.query('SELECT id, pin_hash FROM users WHERE code = ?', [user.code]);
+    if (user.support) throw new HttpError(400, 'Support sessions have no password to change.');
+    const [u] = await pool.query('SELECT id, pin_hash FROM users WHERE id = ?', [user.id]);
     if (!(await verifyPin(String(current || ''), u.pin_hash))) throw new HttpError(400, 'Current password is wrong.');
     if (!validPin(next, 'admin')) throw new HttpError(400, pinRule('admin'));
     await pool.query('UPDATE users SET pin_hash = ?, updated_at = ? WHERE id = ?', [await hashPin(next), now(), u.id]);
-    await audit(pool, user.code, 'password_changed', user.code, null);
+    await audit(pool, user, 'password_changed', user.code, null);
     return { ok: true };
   });
 
@@ -252,8 +275,8 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     q: str(query.get('q')).slice(0, 60) || undefined,
   });
 
-  R('GET', '/loans', async ({ query }) => {
-    const rows = filterLoans(await portfolio(pool, listParams(query)), query);
+  R('GET', '/loans', async ({ query, user }) => {
+    const rows = filterLoans(await portfolio(pool, user.companyId, listParams(query)), query);
     const pageSize = Math.min(100, Math.max(10, Number(query.get('pageSize')) || 25));
     const pages = Math.max(1, Math.ceil(rows.length / pageSize));
     const page = Math.min(pages, Math.max(1, Number(query.get('page')) || 1));
@@ -265,8 +288,9 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     };
   });
 
-  R('GET', '/loans/export', async ({ res, query }) => {
-    const rows = filterLoans(await portfolio(pool, listParams(query)), query);
+  R('GET', '/loans/export', async ({ res, query, user }) => {
+    await requireFeature(pool, user.companyId, 'loan_export');
+    const rows = filterLoans(await portfolio(pool, user.companyId, listParams(query)), query);
     const csv = toCSV(
       ['Loan No', 'Branch', 'Officer', 'Borrower', 'Phone', 'Village', 'Product', 'Principal', 'EMI', 'Disbursed On', 'Outstanding', 'Overdue', 'DPD', 'Bucket'],
       rows.map((r) => [r.loanNo, r.branch, r.officerCode || '', r.borrower.name, r.borrower.phone, r.borrower.village || '',
@@ -277,12 +301,13 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     });
   });
 
-  R('GET', '/loans/:id', async ({ params }) => {
-    const [loan] = await loadLoans(pool, { loanId: params.id });
+  R('GET', '/loans/:id', async ({ params, user }) => {
+    const [loan] = await loadLoans(pool, { companyId: user.companyId, loanId: params.id });
     if (!loan) throw new HttpError(404, 'Loan not found.');
     const [meta] = await pool.query(
       `SELECT l.created_at, l.updated_at, i.file_name, i.at AS imported_at, u.name AS officer_name
-       FROM loans l LEFT JOIN imports i ON i.id = l.import_id LEFT JOIN users u ON u.code = l.officer_code WHERE l.id = ?`, [params.id]);
+       FROM loans l LEFT JOIN imports i ON i.id = l.import_id LEFT JOIN users u ON u.company_id = l.company_id AND u.code = l.officer_code
+       WHERE l.id = ?`, [params.id]);
     return {
       loan, status: loanStatus(loan),
       meta: { createdAt: meta.created_at, updatedAt: meta.updated_at, importFile: meta.file_name, importedAt: meta.imported_at, officerName: meta.officer_name },
@@ -290,17 +315,17 @@ export function mountAdmin(router, { pool, authed, readJson }) {
   });
 
   async function assign(conn, ids, officerCode, user) {
-    const loans = await conn.query('SELECT id, branch, officer_code FROM loans WHERE id IN (?) FOR UPDATE', [ids]);
+    const loans = await conn.query('SELECT id, branch, officer_code FROM loans WHERE company_id = ? AND id IN (?) FOR UPDATE', [user.companyId, ids]);
     if (loans.length !== ids.length) throw new HttpError(404, 'Some loans were not found.');
     if (officerCode) {
       const branches = [...new Set(loans.map((l) => l.branch))];
       if (branches.length > 1) throw new HttpError(400, `Selected loans span branches (${branches.join(', ')}). Assign one branch at a time.`);
-      await assertOfficer(conn, officerCode, branches[0]);
+      await assertOfficer(conn, user.companyId, officerCode, branches[0]);
     }
     const changed = loans.filter((l) => l.officer_code !== officerCode);
     if (changed.length) {
       await conn.query('UPDATE loans SET officer_code = ?, updated_at = ? WHERE id IN (?)', [officerCode, now(), changed.map((l) => l.id)]);
-      await audit(conn, user.code, 'loans_assigned', officerCode || 'unassigned', { loans: changed.length, ids: changed.slice(0, 50).map((l) => l.id) });
+      await audit(conn, user, 'loans_assigned', officerCode || 'unassigned', { loans: changed.length, ids: changed.slice(0, 50).map((l) => l.id) });
     }
     return changed.length;
   }
@@ -322,14 +347,16 @@ export function mountAdmin(router, { pool, authed, readJson }) {
 
   // ---------- import ----------
 
-  R('GET', '/import/template', async ({ res }) => {
+  R('GET', '/import/template', async ({ res, user }) => {
+    await requireFeature(pool, user.companyId, 'loan_import');
     send(res, 200, await buildTemplate(), {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': 'attachment; filename="loan-import-template.xlsx"',
     });
   });
 
-  R('POST', '/import/preview', async ({ req }) => {
+  R('POST', '/import/preview', async ({ req, user }) => {
+    await requireFeature(pool, user.companyId, 'loan_import');
     const { fileName, base64 } = await readJson(req, IMPORT_BODY);
     const name = str(fileName).slice(0, 200);
     if (!name || typeof base64 !== 'string') throw new HttpError(400, 'Choose a file to upload.');
@@ -344,17 +371,18 @@ export function mountAdmin(router, { pool, authed, readJson }) {
       return { fileName: name, format: parsed.format, totalRows: parsed.records.length, missingHeaders: parsed.missingHeaders, rows: [], errors: [] };
     }
     const { valid, errors } = normalise(parsed);
-    const rows = await checkAgainstDb(pool, valid, errors);
+    const rows = await checkAgainstDb(pool, user.companyId, valid, errors);
     return { fileName: name, format: parsed.format, totalRows: parsed.records.length, missingHeaders: [], rows, errors };
   });
 
   R('POST', '/import/commit', async ({ req, user }) => {
+    await requireFeature(pool, user.companyId, 'loan_import');
     const { fileName, loans, totalRows } = await readJson(req, COMMIT_BODY);
     if (!Array.isArray(loans) || !loans.length) throw new HttpError(400, 'Nothing to import.');
     // Re-validate everything: the browser's copy is never trusted.
     const records = loans.map((l, i) => ({ rowNo: i + 1, sheet: 'Import', structured: l }));
     const { valid, errors } = normalise({ records, installments: [] });
-    const rows = await checkAgainstDb(pool, valid, errors);
+    const rows = await checkAgainstDb(pool, user.companyId, valid, errors);
     if (errors.length) {
       throw new HttpError(422, `${errors.length} loan(s) no longer pass validation (data changed since the preview?). Run the preview again.`);
     }
@@ -363,32 +391,37 @@ export function mountAdmin(router, { pool, authed, readJson }) {
       const updated = rows.length - created;
       const skipped = Math.max(0, Number(totalRows || 0) - rows.length);
       const res = await conn.query(
-        'INSERT INTO imports (at, user_code, file_name, total_rows, created, updated, skipped) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [now(), user.code, str(fileName).slice(0, 200) || 'upload', Number(totalRows) || rows.length, created, updated, skipped]);
-      for (const r of rows) await upsertLoan(conn, r.loan, res.insertId);
-      await audit(conn, user.code, 'loans_imported', String(res.insertId), { file: fileName, created, updated, skipped });
+        'INSERT INTO imports (company_id, at, user_code, file_name, total_rows, created, updated, skipped) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [user.companyId, now(), user.code, str(fileName).slice(0, 200) || 'upload', Number(totalRows) || rows.length, created, updated, skipped]);
+      for (const r of rows) await upsertLoan(conn, user.companyId, r.loan, res.insertId);
+      await audit(conn, user, 'loans_imported', String(res.insertId), { file: fileName, created, updated, skipped });
       return { importId: res.insertId, created, updated, skipped };
     });
   });
 
-  R('GET', '/imports', async () => ({
-    imports: await pool.query('SELECT * FROM imports ORDER BY id DESC LIMIT 20'),
+  R('GET', '/imports', async ({ user }) => ({
+    imports: await pool.query('SELECT * FROM imports WHERE company_id = ? ORDER BY id DESC LIMIT 20', [user.companyId]),
   }));
 
   // ---------- audit ----------
 
-  R('GET', '/audit', async ({ query }) => {
-    const where = [];
-    const args = [];
-    if (query.get('action')) where.push('action = ?'), args.push(query.get('action'));
-    if (query.get('user')) where.push('user_code = ?'), args.push(str(query.get('user')).toUpperCase());
-    const sql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  R('GET', '/audit', async ({ query, user }) => {
+    await requireFeature(pool, user.companyId, 'audit_log');
+    const where = ['a.company_id = ?'];
+    const args = [user.companyId];
+    if (query.get('action')) where.push('a.action = ?'), args.push(query.get('action'));
+    if (query.get('user')) where.push('a.user_code = ?'), args.push(str(query.get('user')).toUpperCase());
+    const sql = `WHERE ${where.join(' AND ')}`;
     const pageSize = 50;
-    const [{ n }] = await pool.query(`SELECT COUNT(*) AS n FROM audit_log ${sql}`, args);
+    const [{ n }] = await pool.query(`SELECT COUNT(*) AS n FROM audit_log a ${sql}`, args);
     const pages = Math.max(1, Math.ceil(n / pageSize));
     const page = Math.min(pages, Math.max(1, Number(query.get('page')) || 1));
-    const rows = await pool.query(`SELECT * FROM audit_log ${sql} ORDER BY id DESC LIMIT ? OFFSET ?`, [...args, pageSize, (page - 1) * pageSize]);
-    const actions = (await pool.query('SELECT DISTINCT action FROM audit_log ORDER BY action')).map((r) => r.action);
+    // Work done during a support session is shown with the support person's name.
+    const rows = await pool.query(
+      `SELECT a.id, a.at, a.user_code, a.action, a.entity_id, a.detail, o.name AS support_name FROM audit_log a
+       LEFT JOIN support_sessions ss ON ss.id = a.support_id LEFT JOIN overlords o ON o.id = ss.overlord_id
+       ${sql} ORDER BY a.id DESC LIMIT ? OFFSET ?`, [...args, pageSize, (page - 1) * pageSize]);
+    const actions = (await pool.query('SELECT DISTINCT action FROM audit_log WHERE company_id = ? ORDER BY action', [user.companyId])).map((r) => r.action);
     return { total: n, page, pages, rows: rows.map((r) => ({ ...r, detail: r.detail ? JSON.parse(r.detail) : null })), actions };
   });
 }

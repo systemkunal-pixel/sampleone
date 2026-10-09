@@ -2,16 +2,17 @@
 # LoanDesk — one-step installer for Ubuntu / Debian.
 #
 # Installs Node.js 22 and MariaDB (if missing), creates the database and its user, copies the app to
-# /opt/loan-recovery, creates the first admin, and runs the server as a service on port 8080.
+# /opt/loan-recovery, creates the first admin and overlord accounts, and runs the server as a service on port 8080.
 # Safe to re-run: it updates the code and keeps the existing database, passwords and data.
 #
 # Usage (from the project folder, as root):
 #   sudo bash scripts/install.sh                          # install / update
-#   sudo bash scripts/install.sh --demo                   # also load demo data (empty database only)
+#   sudo bash scripts/install.sh --demo                   # also load demo data into the DataHaat test company
 #   sudo bash scripts/install.sh --domain loandesk.datahaat.com # also set up HTTPS with Caddy (Let's Encrypt)
 #
 # Options:  --app-dir DIR (default /opt/loan-recovery)   --port N (default 8080)   --db-name NAME (default loan_recovery)
 #           --public (listen on all interfaces, e.g. for testing on your LAN without HTTPS)
+#           --overlord-email EMAIL (sign-in for the /overlord/ platform console; default owner@loandesk.local)
 set -euo pipefail
 
 APP_DIR=/opt/loan-recovery
@@ -22,6 +23,7 @@ APP_USER=recovery
 DOMAIN=""
 DEMO=0
 HOST=127.0.0.1
+OVERLORD_EMAIL=owner@loandesk.local
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CRED_FILE=/root/loan-recovery-credentials.txt
 
@@ -32,8 +34,9 @@ while [[ $# -gt 0 ]]; do
     --db-name) DB_NAME="$2"; shift 2 ;;
     --domain) DOMAIN="$2"; shift 2 ;;
     --demo) DEMO=1; shift ;;
+    --overlord-email) OVERLORD_EMAIL="$2"; shift 2 ;;
     --public) HOST=0.0.0.0; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1 (see --help)"; exit 1 ;;
   esac
 done
@@ -143,34 +146,37 @@ chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 say "Creating / upgrading tables"
 as_app node server/admin.js migrate
 
-# ---------------------------------------------------------------- first admin
-users=$(mariadb -N "$DB_NAME" -e 'SELECT COUNT(*) FROM users')
-admins=$(mariadb -N "$DB_NAME" -e "SELECT COUNT(*) FROM users WHERE role = 'admin'")
-ADMIN_PASS=""
-if [[ "$DEMO" == 1 && "$users" == 0 ]]; then
-  say "Loading demo data"
-  as_app node server/admin.js seed-demo >/dev/null
-  echo "Demo branch 'Lucknow Rural': officers FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999), 12 loans"
+# ---------------------------------------------------------------- first accounts
+# Company 1 is BRMC (existing data), company 2 is DataHaat (in-house testing; --demo fills it).
+# New passwords are appended to the credentials file; existing accounts are never touched.
+NEW_CREDS=""
+q() { mariadb -N "$DB_NAME" -e "$1"; }
+if [[ "$(q "SELECT COUNT(*) FROM users WHERE company_id = 1 AND role = 'admin'")" == 0 ]]; then
+  say "Creating the BRMC admin account"
   ADMIN_PASS="Lr$(rand 12)$((RANDOM % 90 + 10))"
-  as_app node server/admin.js set-pin --code ADMIN --pin "$ADMIN_PASS" >/dev/null
-elif [[ "$DEMO" == 1 ]]; then
-  warn "Database already has users — demo data not loaded."
+  as_app node server/admin.js add-user --company BRMC --code ADMIN --name "Administrator" --role admin --branch "Head Office" --pin "$ADMIN_PASS" >/dev/null
+  NEW_CREDS+=$'\n'"Admin console : http://localhost:$PORT/admin/${DOMAIN:+   (public: https://$DOMAIN/admin/)}"$'\n'"  Company code BRMC · admin code ADMIN · password $ADMIN_PASS"$'\n'
 fi
-if [[ -z "$ADMIN_PASS" && "$admins" == 0 && "$(mariadb -N "$DB_NAME" -e "SELECT COUNT(*) FROM users WHERE role = 'admin'")" == 0 ]]; then
-  say "Creating the first admin account"
-  ADMIN_PASS="Lr$(rand 12)$((RANDOM % 90 + 10))"
-  as_app node server/admin.js add-user --code ADMIN --name "Administrator" --role admin --branch "Head Office" --pin "$ADMIN_PASS" >/dev/null
+if [[ "$DEMO" == 1 ]]; then
+  if [[ "$(q "SELECT COUNT(*) FROM users u JOIN companies c ON c.id = u.company_id WHERE c.code = 'DATAHAAT'")" == 0 ]]; then
+    say "Loading demo data into DataHaat"
+    as_app node server/admin.js seed-demo --company DATAHAAT >/dev/null
+    DEMO_PASS="Lr$(rand 12)$((RANDOM % 90 + 10))"
+    as_app node server/admin.js set-pin --company DATAHAAT --code ADMIN --pin "$DEMO_PASS" >/dev/null
+    NEW_CREDS+=$'\n'"DataHaat demo (company code DATAHAAT): admin ADMIN · password $DEMO_PASS"$'\n'"  field app: FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999)"$'\n'
+  else
+    warn "DataHaat already has users — demo data not loaded."
+  fi
 fi
-if [[ -n "$ADMIN_PASS" ]]; then
+if [[ "$(q 'SELECT COUNT(*) FROM overlords')" == 0 ]]; then
+  say "Creating the overlord account ($OVERLORD_EMAIL)"
+  OVERLORD_PASS="Ov$(rand 14)$((RANDOM % 90 + 10))"
+  as_app node server/admin.js add-overlord --email "$OVERLORD_EMAIL" --name "Platform owner" --password "$OVERLORD_PASS" >/dev/null
+  NEW_CREDS+=$'\n'"Overlord console: http://localhost:$PORT/overlord/${DOMAIN:+   (public: https://$DOMAIN/overlord/)}"$'\n'"  Email $OVERLORD_EMAIL · password $OVERLORD_PASS"$'\n'"  First sign-in: scan the QR code with Google/Microsoft Authenticator."$'\n'
+fi
+if [[ -n "$NEW_CREDS" ]]; then
   umask 077
-  cat > "$CRED_FILE" <<CRED
-LoanDesk — created $(date '+%Y-%m-%d %H:%M')
-Admin console : http://localhost:$PORT/admin/${DOMAIN:+   (public: https://$DOMAIN/admin/)}
-Admin code    : ADMIN
-Admin password: $ADMIN_PASS
-$( [[ "$DEMO" == 1 ]] && echo "Demo field logins: FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999)" )
-Change the password after signing in (account menu → Change password).
-CRED
+  { echo "LoanDesk — accounts created $(date '+%Y-%m-%d %H:%M')"; echo "$NEW_CREDS"; echo "Change passwords after signing in (account menu → Change password)."; echo; } >> "$CRED_FILE"
 fi
 
 # ---------------------------------------------------------------- service
@@ -247,16 +253,16 @@ cat <<SUMMARY
 
   Field app     : http://localhost:$PORT/${DOMAIN:+          https://$DOMAIN/}
   Admin console : http://localhost:$PORT/admin/${DOMAIN:+    https://$DOMAIN/admin/}
+  Overlord      : http://localhost:$PORT/overlord/${DOMAIN:+ https://$DOMAIN/overlord/}
   App folder    : $APP_DIR   (settings in $APP_DIR/.env)
   Database      : $DB_NAME on MariaDB, user $DB_USER
 SUMMARY
-if [[ -n "$ADMIN_PASS" ]]; then
-  cat <<SUMMARY
-  Admin login   : ADMIN / $ADMIN_PASS
-                  (also saved in $CRED_FILE — change it after signing in)
-SUMMARY
+if [[ -n "$NEW_CREDS" ]]; then
+  echo "  New accounts  :"
+  echo "$NEW_CREDS" | sed 's/^/    /'
+  echo "  (also saved in $CRED_FILE — change the passwords after signing in)"
 else
-  echo "  Admin login   : unchanged (existing admin accounts kept)"
+  echo "  Accounts      : unchanged (existing admin and overlord accounts kept)"
 fi
 if has_systemd; then
   cat <<SUMMARY
