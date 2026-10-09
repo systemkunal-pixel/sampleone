@@ -8,10 +8,27 @@ import { prepareSlip, putSlip, deleteSlip } from './slips.js';
 import * as install from './install.js';
 import * as supervisor from './supervisor.js';
 import { viewHelp, viewHelpTopic, setHelpQuery } from './help.js';
+import { loadHelpLang } from '../help/content.js';
+import { t, tr, loadLang, setLang, getLang, langSelect } from '../i18n/i18n.js';
 import {
   esc, plural, toast, fmtDate, fmtTime, fmtWhen, netPill, header, verificationTag, decisionLine,
   trackUrl, revokeSlipUrls, hydrateSlips, viewNotFound,
 } from './ui.js';
+
+/*
+ * Labels that come from logic.js (shared with the server) and are translated where they are shown.
+ * i18n: t('Cash') t('UPI') t('Cheque') t('Bank transfer') t('Bank deposit')
+ * i18n: t('Paid in full') t('Partial payment') t('Promise to pay') t('Borrower not available') t('Door locked')
+ *       t('Refused to pay') t('Disputes the dues') t('Shifted / not traceable')
+ * i18n: t('Current') t('1–30 DPD') t('31–60 DPD') t('61–90 DPD') t('90+ DPD (NPA)')
+ * Validation messages from logic.js (shown with tr(), which also matches the {placeholder} keys):
+ * i18n: t('Enter an amount greater than zero.') t('Amount can have at most two decimal places.')
+ *       t('Amount exceeds total outstanding of {amount}.') t('Attach a photo of the deposit slip.')
+ *       t('Enter the slip / journal number printed on the slip.') t('Enter the bank and branch where it was deposited.')
+ *       t('Enter the deposit date.') t('Deposit date cannot be in the future.')
+ *       t('Deposit is more than 90 days old — refer it to the branch.')
+ *       t('Slip {slip} is already recorded on {loan} ({name}).')
+ */
 
 const $app = document.getElementById('app');
 const $nav = document.getElementById('nav');
@@ -20,6 +37,7 @@ let here = null; // last known officer location
 let accountsFilter = { q: '', bucket: 'all' };
 const SEND_WAIT_MS = 8000; // how long a save waits for the server before falling back to the outbox
 
+// Tab labels are translated in renderNav: t('Today') t('Accounts') t('Summary') t('Settings') t('Deposits')
 const NAV = {
   officer: [['#/', 'today', '📋', 'Today'], ['#/accounts', 'accounts', '👥', 'Accounts'], ['#/summary', 'summary', '📊', 'Summary'], ['#/settings', 'settings', '⚙️', 'Settings']],
   supervisor: [['#/deposits', 'deposits', '🏦', 'Deposits'], ['#/accounts', 'accounts', '👥', 'Accounts'], ['#/summary', 'summary', '📊', 'Summary'], ['#/settings', 'settings', '⚙️', 'Settings']],
@@ -58,16 +76,16 @@ async function sendNow(id) {
 }
 
 function bucketBadge(st) {
-  if (st.closed) return '<span class="badge b-closed">Closed</span>';
-  return `<span class="badge b-${esc(st.bucket.key)}">${st.overdue > 0 ? `${st.dpd} DPD` : 'Current'}</span>`;
+  if (st.closed) return `<span class="badge b-closed">${t('Closed')}</span>`;
+  return `<span class="badge b-${esc(st.bucket.key)}">${st.overdue > 0 ? t('{n} DPD', { n: st.dpd }) : t('Current')}</span>`;
 }
 
 function ptpTag(loan, today) {
   const ptp = activePromise(loan);
   if (!ptp || ptp.kept) return '';
-  if (ptp.ptpDate === today) return '<span class="tag tag-warn">PTP due today</span>';
-  if (ptp.ptpDate < today) return '<span class="tag tag-bad">Broken PTP</span>';
-  return `<span class="tag">PTP ${esc(fmtDate(ptp.ptpDate))}</span>`;
+  if (ptp.ptpDate === today) return `<span class="tag tag-warn">${t('PTP due today')}</span>`;
+  if (ptp.ptpDate < today) return `<span class="tag tag-bad">${t('Broken PTP')}</span>`;
+  return `<span class="tag">${esc(t('PTP {date}', { date: fmtDate(ptp.ptpDate) }))}</span>`;
 }
 
 function distanceText(loan) {
@@ -84,9 +102,9 @@ function loanCard(loan, today, extra = '') {
         <strong>${esc(loan.borrower.name)}</strong>
         ${bucketBadge(st)}
       </div>
-      <div class="muted small">${esc(loan.loanNo)} · ${esc(loan.borrower.village)} ${isOfficer() ? distanceText(loan) : `· ${esc(loan.officerCode || 'unassigned')}`}</div>
+      <div class="muted small">${esc(loan.loanNo)} · ${esc(loan.borrower.village)} ${isOfficer() ? distanceText(loan) : `· ${esc(loan.officerCode || t('unassigned'))}`}</div>
       <div class="row between mt-s">
-        <span>Overdue <strong class="${st.overdue > 0 ? 'bad' : ''}">${formatINR(st.overdue)}</strong></span>
+        <span>${t('Overdue')} <strong class="${st.overdue > 0 ? 'bad' : ''}">${formatINR(st.overdue)}</strong></span>
         <span class="tags">${ptpTag(loan, today)}${extra}</span>
       </div>
     </a>`;
@@ -108,36 +126,39 @@ function viewLogin() {
   const expired = session?.expired;
   return `
     <section class="setup">
+      <div class="setup-lang">${langSelect('', t('Language'))}</div>
       <img class="logo" src="icons/icon-192.png" alt="">
       <h1>LoanDesk</h1>
-      <p class="muted small" style="margin-top:-6px">Loan recovery for field teams</p>
-      <p class="muted">${expired ? 'Your session has expired. Log in again to continue.' : 'Log in with your officer code and PIN.'}</p>
-      ${outbox.length ? `<p class="note warn-note">${plural(outbox.length, 'record')} on this phone still need to reach the server. They'll be sent as soon as you log in.</p>` : ''}
+      <p class="muted small" style="margin-top:-6px">${t('Loan recovery for field teams')}</p>
+      <p class="muted">${expired ? t('Your session has expired. Log in again to continue.') : t('Log in with your officer code and PIN.')}</p>
+      ${outbox.length ? `<p class="note warn-note">${plural(outbox.length,
+        t('1 record on this phone still needs to reach the server. It will be sent as soon as you log in.'),
+        t('{n} records on this phone still need to reach the server. They’ll be sent as soon as you log in.'))}</p>` : ''}
       <form id="login-form" class="card form">
-        <label>Company code<input name="company" maxlength="12" autocapitalize="characters" autocomplete="organization" value="${esc(session?.user?.company?.code || store.rememberedCompany())}" placeholder="e.g. BRMC"></label>
-        <label>Officer / supervisor code<input name="code" required maxlength="12" autocapitalize="characters" autocomplete="username" value="${esc(session?.user?.code || '')}"></label>
-        <label>PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" required minlength="4" maxlength="8" autocomplete="current-password"></label>
+        <label>${t('Company code')}<input name="company" maxlength="12" autocapitalize="characters" autocomplete="organization" value="${esc(session?.user?.company?.code || store.rememberedCompany())}" placeholder="${esc(t('e.g. BRMC'))}"></label>
+        <label>${t('Officer / supervisor code')}<input name="code" required maxlength="12" autocapitalize="characters" autocomplete="username" value="${esc(session?.user?.code || '')}"></label>
+        <label>${t('PIN')}<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" required minlength="4" maxlength="8" autocomplete="current-password"></label>
         <p class="error" id="login-error" role="alert"></p>
-        <button class="btn primary big" type="submit">Log in</button>
+        <button class="btn primary big" type="submit">${t('Log in')}</button>
       </form>
-      <p class="small"><a href="#/help/sign-in">Trouble signing in?</a> · <a href="#/help/install-phone">Install the app</a> · <a href="#/help">All help</a></p>
+      <p class="small"><a href="#/help/sign-in">${t('Trouble signing in?')}</a> · <a href="#/help/install-phone">${t('Install the app')}</a> · <a href="#/help">${t('All help')}</a></p>
     </section>`;
 }
 
 // ---------- officer views ----------
 
-const IOS_STEPS = 'In Safari, tap the Share button <b>⬆</b>, then <b>Add to Home Screen</b>.';
+const iosSteps = () => t('In Safari, tap the Share button <b>⬆</b>, then <b>Add to Home Screen</b>.');
 
 function installCard() {
   switch (install.installState()) {
     case 'installed':
-      return '<p class="small">✅ Installed on this phone.</p>';
+      return `<p class="small">✅ ${t('Installed on this phone.')}</p>`;
     case 'prompt':
-      return '<button class="btn primary" data-action="install">📲 Install app on this phone</button>';
+      return `<button class="btn primary" data-action="install">📲 ${t('Install app on this phone')}</button>`;
     case 'ios':
-      return `<p class="small">To install: ${IOS_STEPS}</p>`;
+      return `<p class="small">${t('To install: {steps}', { steps: iosSteps() })}</p>`;
     default:
-      return '<p class="muted small">To install, open the browser menu (⋮) and choose <b>Install app</b> or <b>Add to Home screen</b>.</p>';
+      return `<p class="muted small">${t('To install, open the browser menu (⋮) and choose <b>Install app</b> or <b>Add to Home screen</b>.')}</p>`;
   }
 }
 
@@ -145,10 +166,10 @@ function installBanner() {
   const state = install.installState();
   if (install.bannerDismissed() || (state !== 'prompt' && state !== 'ios')) return '';
   return `<div class="banner">
-    <span>📲 ${state === 'prompt' ? 'Install this app for one-tap access and full offline use.' : `Install this app: ${IOS_STEPS}`}</span>
+    <span>📲 ${state === 'prompt' ? t('Install this app for one-tap access and full offline use.') : t('Install this app: {steps}', { steps: iosSteps() })}</span>
     <span class="banner-actions">
-      ${state === 'prompt' ? '<button class="btn small primary" data-action="install">Install</button>' : ''}
-      <button class="btn small" data-action="dismiss-install" aria-label="Dismiss">✕</button>
+      ${state === 'prompt' ? `<button class="btn small primary" data-action="install">${t('Install')}</button>` : ''}
+      <button class="btn small" data-action="dismiss-install" aria-label="${esc(t('Dismiss'))}">✕</button>
     </span>
   </div>`;
 }
@@ -158,16 +179,16 @@ function alerts(loans, today) {
   const { rejected } = store.getState();
   const refused = rejected.map((r) => `
     <div class="card alert">
-      <div class="row between"><strong>Not accepted by server</strong><button class="btn small" data-action="dismiss-rejected" data-id="${esc(r.id)}">Dismiss</button></div>
+      <div class="row between"><strong>${t('Not accepted by server')}</strong><button class="btn small" data-action="dismiss-rejected" data-id="${esc(r.id)}">${t('Dismiss')}</button></div>
       <div class="small">${esc(r.summary)}</div>
-      <div class="small bad">${esc(r.error)}</div>
+      <div class="small bad">${esc(tr(r.error))}</div>
     </div>`);
   const bounced = loans.flatMap((loan) => loan.payments
     .filter((p) => p.deposit?.verification === 'rejected' && p.deposit.verifiedAt && daysBetween(p.deposit.verifiedAt.slice(0, 10), today) <= 7)
     .map((p) => `
       <a class="card alert" href="#/loan/${esc(loan.id)}">
-        <strong>Bank deposit rejected · ${formatINR(p.amount)}</strong>
-        <div class="small">${esc(loan.borrower.name)} · slip ${esc(p.deposit.slipNo)} — revisit the borrower.</div>
+        <strong>${esc(t('Bank deposit rejected · {amount}', { amount: formatINR(p.amount) }))}</strong>
+        <div class="small">${esc(t('{name} · slip {slip} — revisit the borrower.', { name: loan.borrower.name, slip: p.deposit.slipNo }))}</div>
         ${decisionLine(p.deposit)}
       </a>`));
   return [...refused, ...bounced].join('');
@@ -185,23 +206,23 @@ function viewToday() {
   const pendingDeposits = loans.flatMap((l) => l.payments).filter((p) => p.deposit?.verification === 'pending').length;
 
   return `
-    ${header(`Hi, ${me.name.split(' ')[0]}`, '', 'plan-day')}
+    ${header(t('Hi, {name}', { name: me.name.split(' ')[0] }), '', 'plan-day')}
     ${installBanner()}
     ${alerts(loans, today)}
     <section class="stats">
-      <div class="stat"><span>Collected today</span><strong>${formatINR(day.collected)}</strong></div>
-      <div class="stat"><span>Visits</span><strong>${day.visits.length}</strong></div>
-      <div class="stat ${pendingDeposits ? 'warn' : ''}"><span>Deposits unverified</span><strong>${pendingDeposits}</strong></div>
-      <a class="stat ${outbox.length ? 'warn' : ''}" href="#/settings"><span>Not sent</span><strong>${outbox.length}</strong></a>
+      <div class="stat"><span>${t('Collected today')}</span><strong>${formatINR(day.collected)}</strong></div>
+      <div class="stat"><span>${t('Visits')}</span><strong>${day.visits.length}</strong></div>
+      <div class="stat ${pendingDeposits ? 'warn' : ''}"><span>${t('Deposits unverified')}</span><strong>${pendingDeposits}</strong></div>
+      <a class="stat ${outbox.length ? 'warn' : ''}" href="#/settings"><span>${t('Not sent')}</span><strong>${outbox.length}</strong></a>
     </section>
     <section>
       <div class="row between section-head">
-        <h2>Visit plan · ${pending.length} left</h2>
-        <button class="btn small" data-action="locate">📍 Near me</button>
+        <h2>${t('Visit plan · {n} left', { n: pending.length })}</h2>
+        <button class="btn small" data-action="locate">📍 ${t('Near me')}</button>
       </div>
-      ${loans.length ? '' : '<p class="empty card">No accounts are assigned to you yet. Contact your branch.</p>'}
-      ${pending.length ? pending.map((x) => loanCard(x.loan, today)).join('') : loans.length ? '<p class="empty card">No pending visits. Great work!</p>' : ''}
-      ${done.length ? `<h2 class="mt">Done today · ${done.length}</h2>${done.map((x) => loanCard(x.loan, today, '<span class="tag tag-ok">Visited</span>')).join('')}` : ''}
+      ${loans.length ? '' : `<p class="empty card">${t('No accounts are assigned to you yet. Contact your branch.')}</p>`}
+      ${pending.length ? pending.map((x) => loanCard(x.loan, today)).join('') : loans.length ? `<p class="empty card">${t('No pending visits. Great work!')}</p>` : ''}
+      ${done.length ? `<h2 class="mt">${t('Done today · {n}', { n: done.length })}</h2>${done.map((x) => loanCard(x.loan, today, `<span class="tag tag-ok">${t('Visited')}</span>`)).join('')}` : ''}
     </section>`;
 }
 
@@ -223,18 +244,19 @@ function viewAccounts() {
     `<button class="chip ${accountsFilter.bucket === key ? 'active' : ''}" data-bucket="${esc(key)}">${esc(label)}</button>`;
 
   return `
-    ${header(isOfficer() ? 'My accounts' : 'Branch accounts', '', 'find-account')}
-    <div class="search"><input id="search" type="search" placeholder="Search name, phone, village, loan no.${isOfficer() ? '' : ', officer'}" value="${esc(accountsFilter.q)}"></div>
-    <div class="chips">${chip('all', 'All')}${DPD_BUCKETS.map((b) => chip(b.key, b.label)).join('')}</div>
-    <p class="muted small">${plural(rows.length, 'account')}</p>
-    ${rows.map(({ loan }) => loanCard(loan, today)).join('') || '<p class="empty card">No accounts match.</p>'}`;
+    ${header(isOfficer() ? t('My accounts') : t('Branch accounts'), '', 'find-account')}
+    <div class="search"><input id="search" type="search" placeholder="${esc(isOfficer() ? t('Search name, phone, village, loan no.') : t('Search name, phone, village, loan no., officer'))}" value="${esc(accountsFilter.q)}"></div>
+    <div class="chips">${chip('all', t('All'))}${DPD_BUCKETS.map((b) => chip(b.key, t(b.label))).join('')}</div>
+    <p class="muted small">${plural(rows.length, t('1 account'), t('{n} accounts'))}</p>
+    ${rows.map(({ loan }) => loanCard(loan, today)).join('') || `<p class="empty card">${t('No accounts match.')}</p>`}`;
 }
 
 function paymentLine(loan, p) {
   const link = `<a href="#/receipt/${esc(loan.id)}/${esc(p.id)}">${esc(p.receiptNo)}</a>`;
-  if (!p.deposit) return `<strong class="ok">${formatINR(p.amount)}</strong> collected · ${esc(p.mode)} · ${link}`;
+  if (!p.deposit) return `${t('{amount} collected', { amount: `<strong class="ok">${formatINR(p.amount)}</strong>` })} · ${esc(t(p.mode))} · ${link}`;
   const struck = p.deposit.verification === 'rejected';
-  return `<strong class="${struck ? 'struck' : 'ok'}">${formatINR(p.amount)}</strong> bank deposit · slip ${esc(p.deposit.slipNo)} · ${link} ${verificationTag(p.deposit)}${decisionLine(p.deposit)}`;
+  const amount = `<strong class="${struck ? 'struck' : 'ok'}">${formatINR(p.amount)}</strong>`;
+  return `${t('{amount} bank deposit', { amount })} · ${esc(t('slip {slip}', { slip: p.deposit.slipNo }))} · ${link} ${verificationTag(p.deposit)}${decisionLine(p.deposit)}`;
 }
 
 function viewLoan(id) {
@@ -250,7 +272,7 @@ function viewLoan(id) {
     ...loan.payments.map((p) => ({ at: p.at, html: paymentLine(loan, p), synced: p.synced })),
     ...loan.visits.map((v) => ({
       at: v.at,
-      html: `Visit: <strong>${esc(outcomeLabel(v.outcome))}</strong>${v.outcome === 'PTP' ? ` · ${formatINR(v.ptpAmount)} by ${esc(fmtDate(v.ptpDate))}` : ''}${v.notes ? `<div class="muted small">${esc(v.notes)}</div>` : ''}`,
+      html: `${t('Visit:')} <strong>${esc(t(outcomeLabel(v.outcome)))}</strong>${v.outcome === 'PTP' ? ` · ${esc(t('{amount} by {date}', { amount: formatINR(v.ptpAmount), date: fmtDate(v.ptpDate) }))}` : ''}${v.notes ? `<div class="muted small">${esc(v.notes)}</div>` : ''}`,
       synced: v.synced,
     })),
   ].sort((x, y) => y.at.localeCompare(x.at));
@@ -261,41 +283,41 @@ function viewLoan(id) {
     ${header(b.name, isOfficer() ? '#/' : '#/accounts', isOfficer() ? 'collect-payment' : 'branch-view')}
     <section class="card">
       <div class="row between"><span class="muted small">${esc(loan.loanNo)} · ${esc(loan.product)}</span>${bucketBadge(st)}</div>
-      <div class="muted small">${esc(b.business)}${isOfficer() ? '' : ` · officer ${esc(loan.officerCode || '—')}`}</div>
+      <div class="muted small">${esc(b.business)}${isOfficer() ? '' : ` · ${esc(t('officer {code}', { code: loan.officerCode || '—' }))}`}</div>
       <div class="mt-s">${esc(b.address)}, ${esc(b.village)} ${distanceText(loan)}</div>
       <div class="actions mt">
-        <a class="btn" href="tel:${esc(b.phone)}">📞 Call</a>
-        <a class="btn" href="https://wa.me/91${esc(b.phone)}" target="_blank" rel="noopener">💬 WhatsApp</a>
-        <a class="btn" href="${esc(mapUrl)}" target="_blank" rel="noopener">🧭 Directions</a>
+        <a class="btn" href="tel:${esc(b.phone)}">📞 ${t('Call')}</a>
+        <a class="btn" href="https://wa.me/91${esc(b.phone)}" target="_blank" rel="noopener">💬 ${t('WhatsApp')}</a>
+        <a class="btn" href="${esc(mapUrl)}" target="_blank" rel="noopener">🧭 ${t('Directions')}</a>
       </div>
-      ${b.guarantor ? `<div class="muted small mt-s">Guarantor: ${esc(b.guarantor.name)} · <a href="tel:${esc(b.guarantor.phone)}">${esc(b.guarantor.phone)}</a></div>` : ''}
+      ${b.guarantor ? `<div class="muted small mt-s">${esc(t('Guarantor: {name}', { name: b.guarantor.name }))} · <a href="tel:${esc(b.guarantor.phone)}">${esc(b.guarantor.phone)}</a></div>` : ''}
     </section>
 
     <section class="grid2">
-      <div class="stat"><span>Overdue</span><strong class="${st.overdue > 0 ? 'bad' : ''}">${formatINR(st.overdue)}</strong><small>${plural(st.overdueInstallments, 'EMI')}</small></div>
-      <div class="stat"><span>Total outstanding</span><strong>${formatINR(st.outstanding)}</strong><small>EMI ${formatINR(loan.emi)}</small></div>
-      <div class="stat"><span>Next due</span><strong>${st.nextDue ? esc(fmtDate(st.nextDue.date)) : '—'}</strong><small>${st.nextDue ? formatINR(st.nextDue.amount) : ''}</small></div>
-      <div class="stat"><span>Promise</span><strong>${ptp && !ptp.kept ? esc(fmtDate(ptp.ptpDate)) : '—'}</strong><small>${ptp && !ptp.kept ? formatINR(ptp.ptpAmount) : ''}</small></div>
+      <div class="stat"><span>${t('Overdue')}</span><strong class="${st.overdue > 0 ? 'bad' : ''}">${formatINR(st.overdue)}</strong><small>${plural(st.overdueInstallments, t('1 EMI'), t('{n} EMIs'))}</small></div>
+      <div class="stat"><span>${t('Total outstanding')}</span><strong>${formatINR(st.outstanding)}</strong><small>${t('EMI {amount}', { amount: formatINR(loan.emi) })}</small></div>
+      <div class="stat"><span>${t('Next due')}</span><strong>${st.nextDue ? esc(fmtDate(st.nextDue.date)) : '—'}</strong><small>${st.nextDue ? formatINR(st.nextDue.amount) : ''}</small></div>
+      <div class="stat"><span>${t('Promise')}</span><strong>${ptp && !ptp.kept ? esc(fmtDate(ptp.ptpDate)) : '—'}</strong><small>${ptp && !ptp.kept ? formatINR(ptp.ptpAmount) : ''}</small></div>
     </section>
 
     ${isOfficer() ? `
     <div class="actions sticky">
-      <a class="btn primary big ${st.closed ? 'disabled' : ''}" href="#/loan/${esc(loan.id)}/pay">Collect payment</a>
-      <a class="btn big" href="#/loan/${esc(loan.id)}/visit">Log visit</a>
+      <a class="btn primary big ${st.closed ? 'disabled' : ''}" href="#/loan/${esc(loan.id)}/pay">${t('Collect payment')}</a>
+      <a class="btn big" href="#/loan/${esc(loan.id)}/visit">${t('Log visit')}</a>
     </div>` : ''}
 
     <section>
-      <h2>History</h2>
-      ${history.length ? `<ul class="timeline">${history.map((h) => `<li><span class="muted small">${esc(fmtWhen(h.at))} ${h.synced ? '' : '<span class="tag tag-warn">Not sent</span>'}</span><div>${h.html}</div></li>`).join('')}</ul>` : '<p class="muted">No activity yet.</p>'}
+      <h2>${t('History')}</h2>
+      ${history.length ? `<ul class="timeline">${history.map((h) => `<li><span class="muted small">${esc(fmtWhen(h.at))} ${h.synced ? '' : `<span class="tag tag-warn">${t('Not sent')}</span>`}</span><div>${h.html}</div></li>`).join('')}</ul>` : `<p class="muted">${t('No activity yet.')}</p>`}
     </section>
 
     <details class="card">
-      <summary>Repayment schedule (${plural(schedule.length, 'EMI')})</summary>
+      <summary>${plural(schedule.length, t('Repayment schedule (1 EMI)'), t('Repayment schedule ({n} EMIs)'))}</summary>
       <table class="schedule">
-        <thead><tr><th>#</th><th>Due</th><th>EMI</th><th>Status</th></tr></thead>
+        <thead><tr><th>#</th><th>${t('Due')}</th><th>${t('EMI')}</th><th>${t('Status')}</th></tr></thead>
         <tbody>${schedule.map((r) => `<tr class="${r.pending <= 0 ? 'paid' : r.dueDate <= today ? 'late' : ''}">
           <td>${r.no}</td><td>${esc(fmtDate(r.dueDate))}</td><td>${formatINR(r.amount)}</td>
-          <td>${r.pending <= 0 ? 'Paid' : r.paid > 0 ? `Part (${formatINR(r.pending)} due)` : r.dueDate <= today ? 'Overdue' : 'Upcoming'}</td>
+          <td>${r.pending <= 0 ? t('Paid') : r.paid > 0 ? t('Part ({amount} due)', { amount: formatINR(r.pending) }) : r.dueDate <= today ? t('Overdue') : t('Upcoming')}</td>
         </tr>`).join('')}</tbody>
       </table>
     </details>`;
@@ -307,28 +329,28 @@ function viewPay(id) {
   const st = loanStatus(loan, isoDate());
   const quick = [...new Set([loan.emi, st.overdue, st.outstanding].filter((v) => v > 0 && v <= st.outstanding))];
   return `
-    ${header('Collect payment', `#/loan/${loan.id}`, 'collect-payment')}
+    ${header(t('Collect payment'), `#/loan/${loan.id}`, 'collect-payment')}
     <form id="pay-form" class="card form" data-loan="${esc(loan.id)}">
       <div class="muted">${esc(loan.borrower.name)} · ${esc(loan.loanNo)}</div>
-      <div class="muted small">Overdue ${formatINR(st.overdue)} · Outstanding ${formatINR(st.outstanding)}</div>
-      <label>Amount (₹)<input name="amount" type="number" inputmode="decimal" step="0.01" min="1" max="${st.outstanding}" required value="${st.overdue || ''}"></label>
+      <div class="muted small">${t('Overdue {overdue} · Outstanding {outstanding}', { overdue: formatINR(st.overdue), outstanding: formatINR(st.outstanding) })}</div>
+      <label>${t('Amount (₹)')}<input name="amount" type="number" inputmode="decimal" step="0.01" min="1" max="${st.outstanding}" required value="${st.overdue || ''}"></label>
       <div class="chips">${quick.map((v) => `<button type="button" class="chip" data-fill="${v}">${formatINR(v)}</button>`).join('')}</div>
-      <fieldset class="modes"><legend>Mode</legend>
-        ${PAYMENT_MODES.filter((m) => m !== BANK_DEPOSIT || store.getState().features?.bank_deposits !== false).map((m, i) => `<label class="radio"><input type="radio" name="mode" value="${esc(m)}" ${i === 0 ? 'checked' : ''}> ${esc(m)}</label>`).join('')}
+      <fieldset class="modes"><legend>${t('Mode')}</legend>
+        ${PAYMENT_MODES.filter((m) => m !== BANK_DEPOSIT || store.getState().features?.bank_deposits !== false).map((m, i) => `<label class="radio"><input type="radio" name="mode" value="${esc(m)}" ${i === 0 ? 'checked' : ''}> ${esc(t(m))}</label>`).join('')}
       </fieldset>
-      <label id="ref-wrap" hidden>Reference / UTR / Cheque no.<input name="reference" autocomplete="off"></label>
+      <label id="ref-wrap" hidden>${t('Reference / UTR / Cheque no.')}<input name="reference" autocomplete="off"></label>
       <div id="deposit-fields" class="form" hidden>
-        <p class="note">Borrower paid directly at the bank. Photograph the counterfoil / pay-in slip and enter the details exactly as printed. A supervisor verifies it against the bank.</p>
+        <p class="note">${t('Borrower paid directly at the bank. Photograph the counterfoil / pay-in slip and enter the details exactly as printed. A supervisor verifies it against the bank.')}</p>
         <label class="slip-pick">
-          <span id="slip-preview" class="slip-preview">📷 Take photo or choose file</span>
+          <span id="slip-preview" class="slip-preview">📷 ${t('Take photo or choose file')}</span>
           <input name="slip" type="file" accept="image/*,application/pdf" capture="environment" hidden>
         </label>
-        <label>Slip / journal no.<input name="slipNo" autocomplete="off" autocapitalize="characters"></label>
-        <label>Bank &amp; branch<input name="bank" autocomplete="off" placeholder="e.g. SBI, Chinhat"></label>
-        <label>Deposit date<input name="depositDate" type="date" max="${isoDate()}" min="${addDays(isoDate(), -90)}" value="${isoDate()}"></label>
+        <label>${t('Slip / journal no.')}<input name="slipNo" autocomplete="off" autocapitalize="characters"></label>
+        <label>${t('Bank & branch')}<input name="bank" autocomplete="off" placeholder="${esc(t('e.g. SBI, Chinhat'))}"></label>
+        <label>${t('Deposit date')}<input name="depositDate" type="date" max="${isoDate()}" min="${addDays(isoDate(), -90)}" value="${isoDate()}"></label>
       </div>
       <p class="error" id="pay-error" role="alert"></p>
-      <button class="btn primary big" type="submit">Confirm &amp; issue receipt</button>
+      <button class="btn primary big" type="submit">${t('Confirm & issue receipt')}</button>
     </form>`;
 }
 
@@ -337,24 +359,24 @@ function viewVisit(id) {
   if (!loan || !isOfficer()) return viewNotFound();
   const today = isoDate();
   return `
-    ${header('Log visit', `#/loan/${loan.id}`, 'log-visit')}
+    ${header(t('Log visit'), `#/loan/${loan.id}`, 'log-visit')}
     <form id="visit-form" class="card form" data-loan="${esc(loan.id)}">
       <div class="muted">${esc(loan.borrower.name)} · ${esc(loan.loanNo)}</div>
-      <label>Outcome
+      <label>${t('Outcome')}
         <select name="outcome" required>
-          <option value="" disabled selected>Select outcome…</option>
-          ${VISIT_OUTCOMES.filter((o) => !['PAID', 'PARTIAL'].includes(o.code)).map((o) => `<option value="${o.code}">${esc(o.label)}</option>`).join('')}
+          <option value="" disabled selected>${t('Select outcome…')}</option>
+          ${VISIT_OUTCOMES.filter((o) => !['PAID', 'PARTIAL'].includes(o.code)).map((o) => `<option value="${o.code}">${esc(t(o.label))}</option>`).join('')}
         </select>
       </label>
-      <p class="muted small">Collected money? Use <a href="#/loan/${esc(loan.id)}/pay">Collect payment</a> instead — it counts as today's visit and issues a receipt.</p>
+      <p class="muted small">${t('Collected money? Use <a href="{href}">Collect payment</a> instead — it counts as today’s visit and issues a receipt.', { href: `#/loan/${esc(loan.id)}/pay` })}</p>
       <div id="ptp-fields" hidden>
-        <label>Promised date<input name="ptpDate" type="date" min="${today}" max="${addDays(today, 30)}"></label>
-        <label>Promised amount (₹)<input name="ptpAmount" type="number" inputmode="decimal" min="1" step="0.01" value="${loan.emi}"></label>
+        <label>${t('Promised date')}<input name="ptpDate" type="date" min="${today}" max="${addDays(today, 30)}"></label>
+        <label>${t('Promised amount (₹)')}<input name="ptpAmount" type="number" inputmode="decimal" min="1" step="0.01" value="${loan.emi}"></label>
       </div>
-      <label>Next follow-up<input name="followUpDate" type="date" min="${today}"></label>
-      <label>Notes<textarea name="notes" rows="3" maxlength="500" placeholder="What did the borrower say? Who did you meet?"></textarea></label>
+      <label>${t('Next follow-up')}<input name="followUpDate" type="date" min="${today}"></label>
+      <label>${t('Notes')}<textarea name="notes" rows="3" maxlength="500" placeholder="${esc(t('What did the borrower say? Who did you meet?'))}"></textarea></label>
       <p class="error" id="visit-error" role="alert"></p>
-      <button class="btn primary big" type="submit">Save visit</button>
+      <button class="btn primary big" type="submit">${t('Save visit')}</button>
     </form>`;
 }
 
@@ -367,33 +389,33 @@ function viewReceipt(loanId, paymentId) {
   const d = p.deposit;
   const by = p.officer === me.code ? `${me.name} (${me.code})` : p.officer;
   return `
-    ${header(d ? 'Acknowledgement' : 'Receipt', `#/loan/${loan.id}`, d ? 'record-bank-deposit' : 'share-receipt')}
-    <p class="sync-line ${p.synced ? 'ok' : 'warn'}">${p.synced ? '✓ Received by server' : '⏳ Saved on this phone — sends automatically when the server is reachable'}</p>
+    ${header(d ? t('Acknowledgement') : t('Receipt'), `#/loan/${loan.id}`, d ? 'record-bank-deposit' : 'share-receipt')}
+    <p class="sync-line ${p.synced ? 'ok' : 'warn'}">${p.synced ? `✓ ${t('Received by server')}` : `⏳ ${t('Saved on this phone — sends automatically when the server is reachable')}`}</p>
     <section class="card receipt" id="receipt">
-      <div class="center"><strong>${d ? 'BANK DEPOSIT ACKNOWLEDGEMENT' : 'PAYMENT RECEIPT'}</strong><div class="muted small">${esc(loan.branch || me.branch)} branch</div></div>
+      <div class="center"><strong>${d ? t('BANK DEPOSIT ACKNOWLEDGEMENT') : t('PAYMENT RECEIPT')}</strong><div class="muted small">${esc(t('{branch} branch', { branch: loan.branch || me.branch }))}</div></div>
       <dl>
-        <dt>${d ? 'Ack.' : 'Receipt'} no.</dt><dd>${esc(p.receiptNo)}</dd>
-        <dt>${d ? 'Recorded' : 'Date &amp; time'}</dt><dd>${esc(fmtWhen(p.at))}</dd>
-        <dt>Borrower</dt><dd>${esc(loan.borrower.name)}</dd>
-        <dt>Loan no.</dt><dd>${esc(loan.loanNo)}</dd>
-        <dt>Amount</dt><dd class="amount">${formatINR(p.amount)}</dd>
+        <dt>${d ? t('Ack. no.') : t('Receipt no.')}</dt><dd>${esc(p.receiptNo)}</dd>
+        <dt>${d ? t('Recorded') : t('Date & time')}</dt><dd>${esc(fmtWhen(p.at))}</dd>
+        <dt>${t('Borrower')}</dt><dd>${esc(loan.borrower.name)}</dd>
+        <dt>${t('Loan no.')}</dt><dd>${esc(loan.loanNo)}</dd>
+        <dt>${t('Amount')}</dt><dd class="amount">${formatINR(p.amount)}</dd>
         ${d ? `
-        <dt>Deposited at</dt><dd>${esc(d.bank)}</dd>
-        <dt>Deposit date</dt><dd>${esc(fmtDate(d.depositDate))}</dd>
-        <dt>Slip no.</dt><dd>${esc(d.slipNo)}</dd>
-        <dt>Status</dt><dd>${verificationTag(d)}</dd>` : `
-        <dt>Mode</dt><dd>${esc(p.mode)}${p.reference ? ` (${esc(p.reference)})` : ''}</dd>`}
-        <dt>Balance outstanding</dt><dd>${formatINR(st.outstanding)}</dd>
-        <dt>${d ? 'Recorded by' : 'Collected by'}</dt><dd>${esc(by)}</dd>
+        <dt>${t('Deposited at')}</dt><dd>${esc(d.bank)}</dd>
+        <dt>${t('Deposit date')}</dt><dd>${esc(fmtDate(d.depositDate))}</dd>
+        <dt>${t('Slip no.')}</dt><dd>${esc(d.slipNo)}</dd>
+        <dt>${t('Status')}</dt><dd>${verificationTag(d)}</dd>` : `
+        <dt>${t('Mode')}</dt><dd>${esc(t(p.mode))}${p.reference ? ` (${esc(p.reference)})` : ''}</dd>`}
+        <dt>${t('Balance outstanding')}</dt><dd>${formatINR(st.outstanding)}</dd>
+        <dt>${d ? t('Recorded by') : t('Collected by')}</dt><dd>${esc(by)}</dd>
       </dl>
-      ${d ? `${decisionLine(d)}<p class="muted small center">Credit is subject to verification of the deposit with the bank.</p>
-        <div class="slip-view" data-slip="${esc(p.id)}"><span class="muted small">Loading slip…</span></div>` : ''}
-      ${p.location ? `<div class="muted small center">GPS ${p.location.lat.toFixed(5)}, ${p.location.lng.toFixed(5)}</div>` : ''}
+      ${d ? `${decisionLine(d)}<p class="muted small center">${t('Credit is subject to verification of the deposit with the bank.')}</p>
+        <div class="slip-view" data-slip="${esc(p.id)}"><span class="muted small">${t('Loading slip…')}</span></div>` : ''}
+      ${p.location ? `<div class="muted small center">${t('GPS {lat}, {lng}', { lat: p.location.lat.toFixed(5), lng: p.location.lng.toFixed(5) })}</div>` : ''}
     </section>
     <div class="actions">
-      <button class="btn" data-action="share-receipt" data-loan="${esc(loan.id)}" data-payment="${esc(p.id)}">📤 Share / SMS</button>
-      <button class="btn" data-action="print">🖨 Print</button>
-      <a class="btn primary" href="#/">Done</a>
+      <button class="btn" data-action="share-receipt" data-loan="${esc(loan.id)}" data-payment="${esc(p.id)}">📤 ${t('Share / SMS')}</button>
+      <button class="btn" data-action="print">🖨 ${t('Print')}</button>
+      <a class="btn primary" href="#/">${t('Done')}</a>
     </div>`;
 }
 
@@ -404,25 +426,25 @@ function viewSummary() {
   const pf = portfolioSummary(loans, today);
   const maxCount = Math.max(1, ...pf.buckets.map((b) => b.count));
   return `
-    ${header(isOfficer() ? 'Summary' : 'Branch summary', '', isOfficer() ? 'end-of-day' : 'branch-view')}
+    ${header(isOfficer() ? t('Summary') : t('Branch summary'), '', isOfficer() ? 'end-of-day' : 'branch-view')}
     <section class="card">
-      <h2>Today · ${esc(fmtDate(today))}</h2>
+      <h2>${esc(t('Today · {date}', { date: fmtDate(today) }))}</h2>
       <div class="big-number">${formatINR(day.collected)}</div>
-      <div class="muted small">${plural(day.payments.length, 'receipt')} · ${plural(day.visits.length, 'visit')} · ${plural(day.ptpCount, 'promise')}</div>
-      ${Object.keys(day.byMode).length ? `<table class="kv mt">${Object.entries(day.byMode).map(([m, v]) => `<tr><td>${esc(m)}</td><td>${formatINR(v)}</td></tr>`).join('')}</table>` : ''}
-      ${Object.keys(day.byOutcome).length ? `<h3 class="mt">Visit outcomes</h3><table class="kv">${Object.entries(day.byOutcome).map(([o, n]) => `<tr><td>${esc(outcomeLabel(o))}</td><td>${n}</td></tr>`).join('')}</table>` : ''}
-      <div class="actions mt"><button class="btn" data-action="export-csv">⬇ Export today (CSV)</button></div>
+      <div class="muted small">${plural(day.payments.length, t('1 receipt'), t('{n} receipts'))} · ${plural(day.visits.length, t('1 visit'), t('{n} visits'))} · ${plural(day.ptpCount, t('1 promise'), t('{n} promises'))}</div>
+      ${Object.keys(day.byMode).length ? `<table class="kv mt">${Object.entries(day.byMode).map(([m, v]) => `<tr><td>${esc(t(m))}</td><td>${formatINR(v)}</td></tr>`).join('')}</table>` : ''}
+      ${Object.keys(day.byOutcome).length ? `<h3 class="mt">${t('Visit outcomes')}</h3><table class="kv">${Object.entries(day.byOutcome).map(([o, n]) => `<tr><td>${esc(t(outcomeLabel(o)))}</td><td>${n}</td></tr>`).join('')}</table>` : ''}
+      <div class="actions mt"><button class="btn" data-action="export-csv">⬇ ${t('Export today (CSV)')}</button></div>
     </section>
     <section class="card">
-      <h2>Portfolio</h2>
+      <h2>${t('Portfolio')}</h2>
       <div class="grid2">
-        <div class="stat"><span>Total overdue</span><strong class="bad">${formatINR(pf.overdue)}</strong></div>
-        <div class="stat"><span>Total outstanding</span><strong>${formatINR(pf.outstanding)}</strong></div>
+        <div class="stat"><span>${t('Total overdue')}</span><strong class="bad">${formatINR(pf.overdue)}</strong></div>
+        <div class="stat"><span>${t('Total outstanding')}</span><strong>${formatINR(pf.outstanding)}</strong></div>
       </div>
       <div class="bars mt">
         ${pf.buckets.map((b) => `
           <a class="bar-row" href="#/accounts" data-bucket-link="${esc(b.key)}">
-            <span class="bar-label">${esc(b.label)}</span>
+            <span class="bar-label">${esc(t(b.label))}</span>
             <span class="bar-track"><span class="bar b-${esc(b.key)}" style="width:${(b.count / maxCount) * 100}%"></span></span>
             <span class="bar-val">${b.count} · ${formatINR(b.overdue)}</span>
           </a>`).join('')}
@@ -435,47 +457,52 @@ async function hydrateStorage() {
   if (!el) return;
   const { persisted, usage, quota } = await install.storageInfo();
   const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
-  el.innerHTML = `${persisted ? '🔒 Storage protected — the phone will not auto-clear app data.' : '⚠️ Storage not yet protected. Installing the app usually fixes this.'}${quota ? `<br>Using ${mb(usage)} of ${mb(quota)} available.` : ''}`;
+  el.innerHTML = `${persisted ? `🔒 ${t('Storage protected — the phone will not auto-clear app data.')}` : `⚠️ ${t('Storage not yet protected. Installing the app usually fixes this.')}`}${quota ? `<br>${esc(t('Using {used} of {total} available.', { used: mb(usage), total: mb(quota) }))}` : ''}`;
 }
 
 function viewSettings() {
   const { outbox, lastSyncAt } = store.getState();
   const me = store.user();
   const status = {
-    online: 'Connected — records are sent the moment you save them.',
-    syncing: 'Sending records…',
-    pending: `Server not accepting records right now (${store.net.message}). Retrying automatically.`,
-    offline: 'Server unreachable — no signal or server maintenance. Keep working; records are kept on this phone and sent automatically.',
-  }[store.net.status] || 'Checking connection…';
+    online: t('Connected — records are sent the moment you save them.'),
+    syncing: t('Sending records…'),
+    pending: t('Server not accepting records right now ({reason}). Retrying automatically.', { reason: tr(store.net.message) }),
+    offline: t('Server unreachable — no signal or server maintenance. Keep working; records are kept on this phone and sent automatically.'),
+  }[store.net.status] || t('Checking connection…');
   return `
-    ${header('Settings', '', 'work-offline')}
+    ${header(t('Settings'), '', 'work-offline')}
     <section class="card">
       <h2>${esc(me.name)}</h2>
-      <p class="muted small">${esc(me.code)} · ${me.role === 'officer' ? 'Field officer' : 'Supervisor'} · ${esc(me.branch)}</p>
-      ${me.company ? `<p class="muted small">${esc(me.company.name)} · company code ${esc(me.company.code)}</p>` : ''}
+      <p class="muted small">${esc(me.code)} · ${me.role === 'officer' ? t('Field officer') : t('Supervisor')} · ${esc(me.branch)}</p>
+      ${me.company ? `<p class="muted small">${esc(me.company.name)} · ${esc(t('company code {code}', { code: me.company.code }))}</p>` : ''}
     </section>
     <section class="card">
-      <h2>Connection ${netPill()}</h2>
+      <h2>${t('Connection')} ${netPill()}</h2>
       <p class="small">${esc(status)}</p>
-      <p class="muted small">${plural(outbox.length, 'record')} waiting · last sent ${lastSyncAt ? esc(fmtWhen(lastSyncAt)) : '—'}</p>
+      <p class="muted small">${esc(plural(outbox.length, t('1 record waiting · last sent {when}'), t('{n} records waiting · last sent {when}'), { when: lastSyncAt ? fmtWhen(lastSyncAt) : '—' }))}</p>
       <div class="actions">
-        ${outbox.length ? '<button class="btn primary" data-action="sync">⟳ Send now</button>' : ''}
-        <button class="btn" data-action="refresh">↻ Refresh from server</button>
+        ${outbox.length ? `<button class="btn primary" data-action="sync">⟳ ${t('Send now')}</button>` : ''}
+        <button class="btn" data-action="refresh">↻ ${t('Refresh from server')}</button>
       </div>
     </section>
     <section class="card">
-      <h2>Help &amp; guides</h2>
-      <p class="muted small">Step-by-step guides for every task, a daily routine and answers to common problems. Works offline.</p>
-      <a class="btn primary" href="#/help">📖 Open help</a>
+      <h2>${t('Language')}</h2>
+      <p class="muted small">${t('Choose the language for the app and the help guides.')}</p>
+      ${langSelect('wide', t('Language'))}
     </section>
     <section class="card">
-      <h2>App</h2>
+      <h2>${t('Help & guides')}</h2>
+      <p class="muted small">${t('Step-by-step guides for every task, a daily routine and answers to common problems. Works offline.')}</p>
+      <a class="btn primary" href="#/help">📖 ${t('Open help')}</a>
+    </section>
+    <section class="card">
+      <h2>${t('App')}</h2>
       ${installCard()}
-      <p class="muted small mt-s" data-storage>Checking storage…</p>
+      <p class="muted small mt-s" data-storage>${t('Checking storage…')}</p>
     </section>
     <section class="card">
-      <button class="btn danger" data-action="logout">Log out</button>
-      ${outbox.length ? '<p class="muted small mt-s">You can log out once all records have reached the server.</p>' : ''}
+      <button class="btn danger" data-action="logout">${t('Log out')}</button>
+      ${outbox.length ? `<p class="muted small mt-s">${t('You can log out once all records have reached the server.')}</p>` : ''}
     </section>`;
 }
 
@@ -487,7 +514,7 @@ const FORM_ROUTES = /^(loan\/[^/]+\/(pay|visit)|deposit\/)/;
 function renderNav(tab) {
   const items = NAV[store.user().role] || [];
   $nav.innerHTML = items.map(([href, key, icon, label]) =>
-    `<a href="${href}" data-tab="${key}" class="${key === tab ? 'active' : ''}"><span>${icon}</span>${label}</a>`).join('');
+    `<a href="${href}" data-tab="${key}" class="${key === tab ? 'active' : ''}"><span>${icon}</span>${esc(t(label))}</a>`).join('');
   $nav.hidden = false;
 }
 
@@ -503,9 +530,9 @@ async function route({ keepScroll = false } = {}) {
   }
   if (store.user().role === 'admin') {
     $nav.hidden = true;
-    $app.innerHTML = `${header('Admin account')}
-      <section class="card"><p>Admin accounts don't use the field app.</p>
-        <div class="actions"><a class="btn primary" href="admin/">Open the admin console</a><button class="btn" data-action="logout">Log out</button></div></section>`;
+    $app.innerHTML = `${header(t('Admin account'))}
+      <section class="card"><p>${t('Admin accounts don’t use the field app.')}</p>
+        <div class="actions"><a class="btn primary" href="admin/">${t('Open the admin console')}</a><button class="btn" data-action="logout">${t('Log out')}</button></div></section>`;
     return;
   }
   const hash = location.hash.replace(/^#\/?/, '');
@@ -528,7 +555,7 @@ async function route({ keepScroll = false } = {}) {
   renderNav(tab);
   let html = view();
   if (html instanceof Promise) {
-    if (!keepScroll) $app.innerHTML = `${header('Loading…')}<p class="empty">Loading…</p>`;
+    if (!keepScroll) $app.innerHTML = `${header(t('Loading…'))}<p class="empty">${t('Loading…')}</p>`;
     html = await html;
     if (seq !== routeSeq) return; // navigated away meanwhile
   }
@@ -565,14 +592,14 @@ async function savePayment(form, data) {
   const err =
     validatePayment(loan, Number(data.amount)) ||
     (isDeposit && validateDeposit({ slipNo, bank, depositDate: data.depositDate, hasSlip: !!file }, store.getState().loans)) ||
-    (needsRef && `Enter the ${data.mode} reference number.`);
+    (needsRef && t('Enter the {mode} reference number.', { mode: t(data.mode) }));
   if (err) {
-    $err.textContent = err;
+    $err.textContent = tr(err);
     return;
   }
   const prompt = isDeposit
-    ? `Record bank deposit of ${formatINR(amount)} by ${loan.borrower.name} (slip ${slipNo})? A supervisor will verify it.`
-    : `Confirm collection of ${formatINR(amount)} by ${data.mode} from ${loan.borrower.name}?`;
+    ? t('Record bank deposit of {amount} by {name} (slip {slip})? A supervisor will verify it.', { amount: formatINR(amount), name: loan.borrower.name, slip: slipNo })
+    : t('Confirm collection of {amount} by {mode} from {name}?', { amount: formatINR(amount), mode: t(data.mode), name: loan.borrower.name });
   if (!confirm(prompt)) return;
   const btn = form.querySelector('[type=submit]');
   const label = btn.textContent;
@@ -581,13 +608,13 @@ async function savePayment(form, data) {
   let savedSlip = false;
   try {
     if (isDeposit) {
-      btn.textContent = 'Saving slip…';
+      btn.textContent = t('Saving slip…');
       await putSlip(id, await prepareSlip(file));
       savedSlip = true;
     }
-    btn.textContent = 'Capturing location…';
+    btn.textContent = t('Capturing location…');
     const loc = await getPosition(5000);
-    btn.textContent = 'Sending to server…';
+    btn.textContent = t('Sending to server…');
     const p = store.recordPayment(loan.id, {
       id, amount, mode: data.mode, reference: isDeposit ? slipNo : data.reference?.trim(), location: loc,
       deposit: isDeposit ? { slipNo, bank, depositDate: data.depositDate } : null,
@@ -595,17 +622,20 @@ async function savePayment(form, data) {
     const result = await sendNow(p.id);
     if (result.error) {
       if (savedSlip) deleteSlip(id).catch(() => {});
-      $err.textContent = `Server did not accept this: ${result.error}`;
+      $err.textContent = t('Server did not accept this: {error}', { error: tr(result.error) });
       btn.disabled = false;
       btn.textContent = label;
       return;
     }
-    const kind = isDeposit ? 'Acknowledgement' : 'Receipt';
-    toast(result === 'sent' ? `${kind} ${p.receiptNo} issued · saved on server` : `${kind} ${p.receiptNo} issued · server unreachable, will send automatically`, result === 'sent' ? 'ok' : 'warn');
+    const no = { no: p.receiptNo };
+    const msg = isDeposit
+      ? result === 'sent' ? t('Acknowledgement {no} issued · saved on server', no) : t('Acknowledgement {no} issued · server unreachable, will send automatically', no)
+      : result === 'sent' ? t('Receipt {no} issued · saved on server', no) : t('Receipt {no} issued · server unreachable, will send automatically', no);
+    toast(msg, result === 'sent' ? 'ok' : 'warn');
     location.hash = `#/receipt/${loan.id}/${p.id}`;
   } catch (e2) {
     if (savedSlip) deleteSlip(id).catch(() => {});
-    $err.textContent = e2.message || 'Could not save the payment.';
+    $err.textContent = tr(e2.message) || t('Could not save the payment.');
     btn.disabled = false;
     btn.textContent = label;
   }
@@ -614,14 +644,14 @@ async function savePayment(form, data) {
 async function saveVisit(form, data) {
   const $err = form.querySelector('#visit-error');
   if (data.outcome === 'PTP' && (!data.ptpDate || !(Number(data.ptpAmount) > 0))) {
-    $err.textContent = 'Enter the promised date and amount.';
+    $err.textContent = t('Enter the promised date and amount.');
     return;
   }
   const btn = form.querySelector('[type=submit]');
   btn.disabled = true;
-  btn.textContent = 'Capturing location…';
+  btn.textContent = t('Capturing location…');
   const loc = await getPosition(5000);
-  btn.textContent = 'Sending to server…';
+  btn.textContent = t('Sending to server…');
   const v = store.recordVisit(form.dataset.loan, {
     outcome: data.outcome,
     notes: data.notes.trim(),
@@ -632,12 +662,12 @@ async function saveVisit(form, data) {
   });
   const result = await sendNow(v.id);
   if (result.error) {
-    $err.textContent = `Server did not accept this: ${result.error}`;
+    $err.textContent = t('Server did not accept this: {error}', { error: tr(result.error) });
     btn.disabled = false;
-    btn.textContent = 'Save visit';
+    btn.textContent = t('Save visit');
     return;
   }
-  toast(result === 'sent' ? 'Visit saved on server' : 'Visit saved on phone · will send automatically', result === 'sent' ? 'ok' : 'warn');
+  toast(result === 'sent' ? t('Visit saved on server') : t('Visit saved on phone · will send automatically'), result === 'sent' ? 'ok' : 'warn');
   location.hash = `#/loan/${form.dataset.loan}`;
 }
 
@@ -652,15 +682,15 @@ document.addEventListener('submit', async (e) => {
   if (form.id === 'login-form') {
     const btn = form.querySelector('[type=submit]');
     btn.disabled = true;
-    btn.textContent = 'Logging in…';
+    btn.textContent = t('Logging in…');
     try {
       await store.login(data.company, data.code, data.pin);
       location.hash = '#/';
       install.protectStorage().catch(() => {});
     } catch (err) {
-      form.querySelector('#login-error').textContent = err.message;
+      form.querySelector('#login-error').textContent = tr(err.message);
       btn.disabled = false;
-      btn.textContent = 'Log in';
+      btn.textContent = t('Log in');
     }
   }
 });
@@ -692,9 +722,9 @@ document.addEventListener('click', async (e) => {
 
   switch (el.dataset.action) {
     case 'locate': {
-      el.textContent = 'Locating…';
+      el.textContent = t('Locating…');
       const pos = await getPosition();
-      if (!pos) toast('Could not get your location', 'bad');
+      if (!pos) toast(t('Could not get your location'), 'bad');
       route();
       break;
     }
@@ -706,10 +736,16 @@ document.addEventListener('click', async (e) => {
       const p = loan.payments.find((x) => x.id === el.dataset.payment);
       const st = loanStatus(loan, isoDate());
       const text = p.deposit
-        ? `Ack ${p.receiptNo}: Your bank deposit of ${formatINR(p.amount)} (slip ${p.deposit.slipNo}, ${p.deposit.bank}, ${fmtDate(p.deposit.depositDate)}) towards loan ${loan.loanNo} has been recorded and is pending verification. Balance outstanding ${formatINR(st.outstanding)}.`
-        : `Receipt ${p.receiptNo}: Received ${formatINR(p.amount)} (${p.mode}) towards loan ${loan.loanNo} on ${fmtDate(p.at)} ${fmtTime(p.at)}. Balance outstanding ${formatINR(st.outstanding)}. Thank you.`;
+        ? t('Ack {no}: Your bank deposit of {amount} (slip {slip}, {bank}, {date}) towards loan {loan} has been recorded and is pending verification. Balance outstanding {balance}.', {
+          no: p.receiptNo, amount: formatINR(p.amount), slip: p.deposit.slipNo, bank: p.deposit.bank,
+          date: fmtDate(p.deposit.depositDate), loan: loan.loanNo, balance: formatINR(st.outstanding),
+        })
+        : t('Receipt {no}: Received {amount} ({mode}) towards loan {loan} on {date} {time}. Balance outstanding {balance}. Thank you.', {
+          no: p.receiptNo, amount: formatINR(p.amount), mode: t(p.mode), loan: loan.loanNo,
+          date: fmtDate(p.at), time: fmtTime(p.at), balance: formatINR(st.outstanding),
+        });
       if (navigator.share) {
-        navigator.share({ title: 'Payment receipt', text }).catch(() => {});
+        navigator.share({ title: t('Payment receipt'), text }).catch(() => {});
       } else {
         location.href = `sms:${loan.borrower.phone}?body=${encodeURIComponent(text)}`;
       }
@@ -724,7 +760,9 @@ document.addEventListener('click', async (e) => {
       el.disabled = true;
       const n = await store.flush().catch(() => 0);
       const left = store.getState().outbox.length;
-      toast(left ? `Sent ${n}; ${plural(left, 'record')} still waiting — server unreachable` : `Sent ${plural(n, 'record')}`, left ? 'bad' : 'ok');
+      toast(left
+        ? plural(left, t('Sent {sent}; 1 record still waiting — server unreachable'), t('Sent {sent}; {n} records still waiting — server unreachable'), { sent: n })
+        : plural(n, t('Sent 1 record'), t('Sent {n} records')), left ? 'bad' : 'ok');
       route();
       break;
     }
@@ -732,9 +770,9 @@ document.addEventListener('click', async (e) => {
       el.disabled = true;
       try {
         await store.refresh();
-        toast('Up to date');
+        toast(t('Up to date'));
       } catch (err) {
-        toast(err.message, 'bad');
+        toast(tr(err.message), 'bad');
       }
       route();
       break;
@@ -742,7 +780,7 @@ document.addEventListener('click', async (e) => {
       store.dismissRejected(el.dataset.id);
       break;
     case 'install':
-      if (await install.promptInstall()) toast('Installing…');
+      if (await install.promptInstall()) toast(t('Installing…'));
       route();
       break;
     case 'dismiss-install':
@@ -750,12 +788,12 @@ document.addEventListener('click', async (e) => {
       route();
       break;
     case 'logout':
-      if (!confirm('Log out of this phone?')) break;
+      if (!confirm(t('Log out of this phone?'))) break;
       try {
         await store.logout();
         location.hash = '#/';
       } catch (err) {
-        toast(err.message, 'bad');
+        toast(tr(err.message), 'bad');
       }
       break;
   }
@@ -784,24 +822,28 @@ document.addEventListener('input', (e) => {
 });
 
 document.addEventListener('change', (e) => {
-  const t = e.target;
-  if (t.form?.id === 'pay-form') document.getElementById('pay-error').textContent = '';
-  if (t.name === 'mode' && t.form?.id === 'pay-form') {
-    document.getElementById('ref-wrap').hidden = t.value === 'Cash' || t.value === BANK_DEPOSIT;
-    document.getElementById('deposit-fields').hidden = t.value !== BANK_DEPOSIT;
-    t.form.querySelector('[type=submit]').textContent =
-      t.value === BANK_DEPOSIT ? 'Save deposit & issue acknowledgement' : 'Confirm & issue receipt';
+  const el = e.target;
+  if (el.matches?.('[data-lang-select]')) {
+    setLang(el.value);
+    return;
   }
-  if (t.name === 'slip' && t.form?.id === 'pay-form') {
-    const file = t.files[0];
+  if (el.form?.id === 'pay-form') document.getElementById('pay-error').textContent = '';
+  if (el.name === 'mode' && el.form?.id === 'pay-form') {
+    document.getElementById('ref-wrap').hidden = el.value === 'Cash' || el.value === BANK_DEPOSIT;
+    document.getElementById('deposit-fields').hidden = el.value !== BANK_DEPOSIT;
+    el.form.querySelector('[type=submit]').textContent =
+      el.value === BANK_DEPOSIT ? t('Save deposit & issue acknowledgement') : t('Confirm & issue receipt');
+  }
+  if (el.name === 'slip' && el.form?.id === 'pay-form') {
+    const file = el.files[0];
     const box = document.getElementById('slip-preview');
     revokeSlipUrls();
-    if (!file) box.textContent = '📷 Take photo or choose file';
-    else if (file.type.startsWith('image/')) box.innerHTML = `<img src="${trackUrl(URL.createObjectURL(file))}" alt="Deposit slip preview"><span>Tap to retake</span>`;
-    else box.textContent = `📄 ${file.name} — tap to change`;
+    if (!file) box.textContent = `📷 ${t('Take photo or choose file')}`;
+    else if (file.type.startsWith('image/')) box.innerHTML = `<img src="${trackUrl(URL.createObjectURL(file))}" alt="${esc(t('Deposit slip preview'))}"><span>${t('Tap to retake')}</span>`;
+    else box.textContent = `📄 ${t('{file} — tap to change', { file: file.name })}`;
   }
-  if (t.name === 'outcome' && t.form?.id === 'visit-form') {
-    const show = t.value === 'PTP';
+  if (el.name === 'outcome' && el.form?.id === 'visit-form') {
+    const show = el.value === 'PTP';
     const box = document.getElementById('ptp-fields');
     box.hidden = !show;
     box.querySelectorAll('input').forEach((i) => (i.required = show));
@@ -819,6 +861,17 @@ install.onInstallChange(() => {
   if (h === '' || h === '#/' || h === '#/settings') route();
 });
 install.protectStorage().catch(() => {});
+
+// Load the language (and the help in that language) before the first render.
+await loadLang().catch(() => {});
+await loadHelpLang(getLang()).catch(() => {});
+document.title = t('LoanDesk');
+
+window.addEventListener('langchange', async () => {
+  await loadHelpLang(getLang()).catch(() => {});
+  document.title = t('LoanDesk');
+  route({ keepScroll: true });
+});
 
 store.startAutoSync();
 route();

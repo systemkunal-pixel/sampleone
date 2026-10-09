@@ -291,3 +291,23 @@ CREATE TABLE IF NOT EXISTS platform_state (
   v           TEXT         NULL,
   updated_at  DATETIME     NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+;
+
+-- v5: demo requests from the home page (lead generation), handled in the overlord console.
+CREATE TABLE IF NOT EXISTS leads (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  at          DATETIME     NOT NULL,
+  name        VARCHAR(100) NOT NULL,
+  company     VARCHAR(150) NOT NULL,
+  phone       VARCHAR(15)  NOT NULL,
+  email       VARCHAR(190) NULL,
+  officers    INT UNSIGNED NULL,
+  message     VARCHAR(1000) NULL,
+  lang        VARCHAR(5)   NULL,
+  ip          VARCHAR(45)  NULL,
+  status      ENUM('new', 'contacted', 'demo_done', 'won', 'lost') NOT NULL DEFAULT 'new',
+  note        VARCHAR(1000) NULL,
+  updated_by  VARCHAR(190) NULL,
+  updated_at  DATETIME     NULL,
+  KEY ix_leads_at (at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

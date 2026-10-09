@@ -562,23 +562,44 @@ export const TOPICS = [
   },
 ];
 
-/** Topics for a role, optionally filtered by a search phrase. */
-export function topicsFor(role, query = '') {
-  const q = query.trim().toLowerCase();
-  return TOPICS.filter((t) => !role || t.audience.includes(role)).filter((t) => {
-    if (!q) return true;
-    const hay = `${t.title} ${t.summary} ${(t.steps || []).join(' ')} ${(t.tips || []).join(' ')} ${t.body || ''}`
-      .replace(/<[^>]+>/g, ' ').toLowerCase();
-    return q.split(/\s+/).every((w) => hay.includes(w));
-  });
+// ------------------------------------------------------------------ translations
+// src/help/i18n/<lang>.js exports { labels: { Tips, categories: {id: label}, roles: {role: label} },
+// topics: { id: { title, summary, steps?, tips?, body? } } }. Anything missing falls back to English.
+
+let local = null;
+
+/** Loads the help text for a language ('en' = the English above). */
+export async function loadHelpLang(code) {
+  local = null;
+  if (!code || code === 'en') return;
+  try {
+    local = (await import(`./i18n/${code}.js`)).default;
+  } catch {
+    local = null;
+  }
 }
 
-export const topicById = (id) => TOPICS.find((t) => t.id === id);
+const localize = (t) => (t && local?.topics?.[t.id] ? { ...t, ...local.topics[t.id] } : t);
+export const categoryLabel = (c) => local?.labels?.categories?.[c.id] || c.label;
+export const roleLabel = (r) => local?.labels?.roles?.[r] || ROLES[r] || r;
+
+/** Topics for a role, optionally filtered by a search phrase (matches the translation and the English). */
+export function topicsFor(role, query = '') {
+  const q = query.trim().toLowerCase();
+  const text = (t) => `${t.title} ${t.summary} ${(t.steps || []).join(' ')} ${(t.tips || []).join(' ')} ${t.body || ''}`;
+  return TOPICS.filter((t) => !role || t.audience.includes(role)).filter((t) => {
+    if (!q) return true;
+    const hay = `${text(t)} ${text(localize(t))}`.replace(/<[^>]+>/g, ' ').toLowerCase();
+    return q.split(/\s+/).every((w) => hay.includes(w));
+  }).map(localize);
+}
+
+export const topicById = (id) => localize(TOPICS.find((t) => t.id === id));
 
 /** The full HTML of a topic (steps, body, tips). */
 export function topicHtml(t) {
   return `
     ${t.body || ''}
     ${t.steps ? `<ol class="help-steps">${t.steps.map((s) => `<li>${s}</li>`).join('')}</ol>` : ''}
-    ${t.tips ? `<div class="help-tips"><b>Tips</b><ul>${t.tips.map((s) => `<li>${s}</li>`).join('')}</ul></div>` : ''}`;
+    ${t.tips ? `<div class="help-tips"><b>${local?.labels?.Tips || 'Tips'}</b><ul>${t.tips.map((s) => `<li>${s}</li>`).join('')}</ul></div>` : ''}`;
 }

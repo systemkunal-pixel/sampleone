@@ -3,6 +3,7 @@
 import { isoDate, localTimestamp, receiptNumber, findDuplicateSlip } from './logic.js';
 import { call, OfflineError, ApiError } from './api.js';
 import { getSlip, blobToBase64, clearSlips } from './slips.js';
+import { t } from '../i18n/i18n.js';
 
 const KEY = 'loan-recovery:v2';
 const AUTO_SYNC_MS = 20000;
@@ -94,10 +95,13 @@ export async function login(company, code, pin) {
   const wanted = String(code).trim().toUpperCase();
   const wantedCompany = String(company || '').trim().toUpperCase();
   if (pending && (pending !== wanted || (pendingCompany && wantedCompany && pendingCompany !== wantedCompany))) {
-    throw new Error(`This phone has ${state.outbox.length} unsent record(s) from ${pending}${pendingCompany ? ` (${pendingCompany})` : ''}. Log in as ${pending} to send them first.`);
+    const vars = { n: state.outbox.length, code: pending, company: pendingCompany };
+    throw new Error(pendingCompany
+      ? t('This phone has {n} unsent record(s) from {code} ({company}). Log in as {code} to send them first.', vars)
+      : t('This phone has {n} unsent record(s) from {code}. Log in as {code} to send them first.', vars));
   }
   const res = await call('login', { method: 'POST', body: { company: wantedCompany, code: wanted, pin } }).catch((err) => {
-    if (err instanceof OfflineError) throw new Error('Cannot reach the server. Check your connection and try again.');
+    if (err instanceof OfflineError) throw new Error(t('Cannot reach the server. Check your connection and try again.'));
     throw err;
   });
   try {
@@ -115,7 +119,7 @@ export async function login(company, code, pin) {
 
 export async function logout() {
   if (state.outbox.length) {
-    throw new Error(`${state.outbox.length} record(s) haven't reached the server yet. Wait until you're back online.`);
+    throw new Error(t('{n} record(s) haven’t reached the server yet. Wait until you’re back online.', { n: state.outbox.length }));
   }
   await call('logout', { method: 'POST', token: token(), timeout: 5000 }).catch(() => {});
   state = blank();
@@ -181,8 +185,8 @@ function enqueue(type, loanId, record) {
  */
 export function recordPayment(loanId, { id, amount, mode, reference, location, deposit }) {
   const loan = getLoan(loanId);
-  if (!loan) throw new Error('Loan not found');
-  if (deposit && findDuplicateSlip(state.loans, deposit.slipNo)) throw new Error('This slip is already recorded.');
+  if (!loan) throw new Error(t('Loan not found'));
+  if (deposit && findDuplicateSlip(state.loans, deposit.slipNo)) throw new Error(t('This slip is already recorded.'));
   const payment = {
     id: id || uid('p'),
     at: localTimestamp(),
@@ -203,7 +207,7 @@ export function recordPayment(loanId, { id, amount, mode, reference, location, d
 
 export function recordVisit(loanId, { outcome, notes, ptpDate, ptpAmount, followUpDate, location }) {
   const loan = getLoan(loanId);
-  if (!loan) throw new Error('Loan not found');
+  if (!loan) throw new Error(t('Loan not found'));
   const visit = {
     id: uid('v'),
     at: localTimestamp(),

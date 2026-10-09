@@ -8,7 +8,8 @@ LoanDesk is **multi-company**: each lending company is a separate workspace with
 
 | Part | Who | Where |
 |---|---|---|
-| **Field app**: installable phone app (PWA) | Field officers and supervisors | `https://loandesk.datahaat.com/` |
+| **Home page**: product page with demo requests | Prospective customers | `https://loandesk.datahaat.com/` |
+| **Field app**: installable phone app (PWA) | Field officers and supervisors | `https://loandesk.datahaat.com/app/` |
 | **Admin console**: responsive web console | Each company's head-office admins | `https://loandesk.datahaat.com/admin/` |
 | **Overlord console**: platform console | The LoanDesk operator | `https://loandesk.datahaat.com/overlord/` |
 | **Server**: Node.js API with a **MariaDB** database | | Serves all of the above |
@@ -96,6 +97,24 @@ powershell -ExecutionPolicy Bypass -File C:\src\sampleone\scripts\install.ps1 -D
 - **Support access:** enter a company's admin console as **LoanDesk support** with a typed reason. A red banner shows throughout, the session ends after 45 minutes, and **Exit** is one click away. Every action is recorded in that company's audit log under `SUPPORT` with the overlord's name. **Support sessions** lists every entry: who, where, why, start and end, IP, and what was changed.
 - **Plans & features:** a matrix of what Regular, Pro and Enterprise include, and their field-officer limits. Per-company overrides force one feature on or off and survive plan changes. A feature that is switched off is hidden in the apps and refused by the server.
 - **Overlord accounts** and the append-only **Overlord audit log**, which records every action in the console, including failed sign-ins.
+
+## Languages
+
+The home page, the field app, the admin console and the whole help manual are available in **English, हिन्दी (Hindi), বাংলা (Bengali), मराठी (Marathi) and ଓଡ଼ିଆ (Odia)**. The overlord console stays in English.
+
+- **Choosing a language:** use the selector on the sign-in screens, in the field app's **Settings**, in the admin console's account menu, or in the home page header. The choice is remembered on that device. The first time, the browser's language is used if it is one of the five.
+- **How it works:**
+  - The English text is the key: the code calls `t('Collect payment')`, and `src/i18n/<lang>.js` maps English to the translation. Anything missing falls back to English.
+  - Error messages from the server are translated in the browser by matching templates such as `Try again in {n} minutes.`. These are listed in `src/i18n/server-messages.js`.
+  - The help manual's translations are in `src/help/i18n/<lang>.js`, with the same topic ids.
+- **Adding or changing text:** wrap new UI text in `t('…')`, then run `node scripts/i18n-keys.js --check` to see which translations are missing. `tests/i18n.test.js` fails until every language has every string and the same `{placeholders}`.
+
+## Home page and demo requests
+
+`/` is the product page; the field app moved to `/app/`.
+- **Phones that installed the app from `/` before the move** are sent to `/app/`. A replacement service worker at `/sw.js` removes the old offline cache.
+- **Book a demo:** the form stores requests in the `leads` table. It has a hidden honeypot field and a limit of 5 requests per hour per network.
+- **Demo requests** in the overlord console lists them with status (New, Contacted, Demo done, Won, Lost) and a note.
 
 ## Multi-company and the overlord console
 

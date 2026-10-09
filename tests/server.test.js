@@ -57,7 +57,7 @@ before(async () => {
   });
   for (const t of ['imports', 'audit_log', 'deposit_slips', 'visits', 'payments', 'sessions', 'loans', 'users', 'companies',
     'overlord_sessions', 'overlords', 'support_sessions', 'overlord_audit', 'plans', 'plan_features', 'company_feature_overrides',
-    'platform_updates', 'platform_update_events', 'platform_state']) {
+    'platform_updates', 'platform_update_events', 'platform_state', 'leads']) {
     await pool.query(`DROP TABLE IF EXISTS ${t}`);
   }
   await migrate(pool);

@@ -4,7 +4,8 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { isoDate, lastReceiptSeq } from '../src/js/logic.js';
 import { createSession, userForToken, deleteSession, verifyPin, LoginThrottle } from './auth.js';
 import { companyEntitlements } from './plans.js';
-import { mountOverlord } from './overlord-api.js';
+import { mountOverlord, clientIp } from './overlord-api.js';
+import { mountLeads } from './leads.js';
 import { VERSION } from './version.js';
 import { loadLoans, paymentFromRow, withTx, audit, now } from './db.js';
 import { acceptRecord, MAX_SLIP_BYTES } from './records.js';
@@ -24,6 +25,14 @@ const TYPES = {
 };
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; " +
   "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+const RETIRED_SW = `self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil((async () => {
+  for (const k of await caches.keys()) await caches.delete(k);
+  await self.registration.unregister();
+  for (const c of await self.clients.matchAll({ type: 'window' })) c.navigate(c.url);
+})()));
+`;
 
 const publicUser = (u) => ({
   code: u.code, name: u.name, role: u.role, branch: u.branch,
@@ -212,14 +221,32 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR }) {
   });
 
   mountAdmin(router, { pool, authed: (req) => authed(req, 'admin'), readJson: json });
-  mountOverlord(router, { pool, readJson: json });
+  const leads = mountLeads(router, { pool, readJson: json, clientIp });
+  mountOverlord(router, { pool, readJson: json, leads });
 
   async function serveStatic(req, res) {
     if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Method not allowed.');
     let path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-    if (path === '/admin' || path === '/overlord') {
+    if (path === '/admin' || path === '/overlord' || path === '/app') {
       res.writeHead(301, { Location: `${path}/` }).end();
       return;
+    }
+    if (path === '/sw.js') {
+      // The field app used to live at / with its service worker there; it moved to /app/.
+      // This replacement removes the old worker from phones so / shows the home page.
+      send(res, 200, Buffer.from(RETIRED_SW), { 'Content-Type': TYPES['.js'], 'Cache-Control': 'no-cache' });
+      return;
+    }
+    // The field app is served at /app/ from the same files (src/), so its relative links keep working.
+    if (path.startsWith('/app/')) {
+      const rest = path.slice(4);
+      if (/^\/(admin|overlord)(\/|$)/.test(rest)) {
+        res.writeHead(301, { Location: rest }).end();
+        return;
+      }
+      path = rest === '/' ? '/index.html' : rest;
+    } else if (path === '/') {
+      path = '/home/index.html';
     }
     if (path.endsWith('/')) path += 'index.html';
     const file = normalize(join(staticDir, path));

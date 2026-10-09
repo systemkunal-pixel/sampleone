@@ -48,7 +48,7 @@ before(async () => {
   });
   for (const t of ['imports', 'audit_log', 'deposit_slips', 'visits', 'payments', 'sessions', 'loans', 'users', 'companies',
     'overlord_sessions', 'overlords', 'support_sessions', 'overlord_audit', 'plans', 'plan_features', 'company_feature_overrides',
-    'platform_updates', 'platform_update_events', 'platform_state']) {
+    'platform_updates', 'platform_update_events', 'platform_state', 'leads']) {
     await pool.query(`DROP TABLE IF EXISTS ${t}`);
   }
   await migrate(pool);
@@ -309,4 +309,19 @@ test('signed updates: verify needs the release key, stage needs the typed versio
   assert.deepEqual(page.events.slice(0, 5).map((e) => `${e.action}:${e.outcome}`), ['stage:refused', 'stage:ok', 'stage:refused', 'verify:ok', 'verify:refused']);
   assert.equal((await O(`/updates/${staged.body.id}/cancel`, { method: 'POST' })).status, 200);
   delete process.env.UPDATE_PUBLIC_KEY;
+});
+
+test('home page demo requests: validated, honeypot ignored, listed and tracked in the overlord console', opts, async () => {
+  const post = (body) => call('/api/leads', { method: 'POST', body });
+  assert.equal((await post({ name: 'Asha', company: 'Asha MFI', phone: '12345' })).status, 400);
+  assert.equal((await post({ name: 'Bot', company: 'Spam', phone: '9876543210', website: 'http://spam' })).status, 200);
+  assert.equal((await post({ name: 'Asha Verma', company: 'Asha MFI', phone: '+91 98765 43210', officers: '25', lang: 'hi' })).status, 200);
+  const { leads, counts } = (await O('/leads')).body;
+  assert.equal(leads.length, 1, 'the honeypot submission was not stored');
+  assert.equal(leads[0].phone, '9876543210');
+  assert.equal(leads[0].officers, 25);
+  assert.equal(counts.new, 1);
+  assert.equal((await O(`/leads/${leads[0].id}`, { method: 'PATCH', body: { status: 'contacted', note: 'Demo on Friday' } })).status, 200);
+  assert.equal((await O('/leads?status=contacted')).body.leads[0].note, 'Demo on Friday');
+  assert.equal((await call('/api/overlord/leads')).status, 401);
 });

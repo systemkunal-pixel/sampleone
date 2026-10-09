@@ -25,7 +25,7 @@ const USER_CODE = /^[A-Z0-9]{2,12}$/;
 const str = (v) => String(v ?? '').trim();
 const minutesFromNow = (m) => sqlTime(new Date(Date.now() + m * 60000));
 
-function clientIp(req) {
+export function clientIp(req) {
   const remote = req.socket.remoteAddress || '';
   // Behind Caddy/nginx on the same machine, the real address is in X-Forwarded-For.
   const fwd = /^(::ffff:)?127\.|^::1$/.test(remote) ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '';
@@ -132,7 +132,7 @@ async function companyFigures(pool, { includeArchived = false } = {}) {
 
 // ---------- routes ----------
 
-export function mountOverlord(router, { pool, readJson }) {
+export function mountOverlord(router, { pool, readJson, leads }) {
   const throttle = new LoginThrottle();
 
   async function authed(req) {
@@ -151,6 +151,7 @@ export function mountOverlord(router, { pool, readJson }) {
   const R = (method, path, fn) => router.add(method, `/api/overlord${path}`, async (req, res, params, query) =>
     fn({ req, res, params, query, ctx: await authed(req) }));
   registerUpdateRoutes(R, { pool, readJson });
+  leads?.register(R, oaudit);
   const open = (method, path, fn) => router.add(method, `/api/overlord${path}`, (req, res, params, query) => fn({ req, res, params, query }));
 
   // ----- sign-in: password, then authenticator code -----
