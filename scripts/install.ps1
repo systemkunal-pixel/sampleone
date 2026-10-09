@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Loan Recovery - one-step installer for Windows 10 / 11 (and Windows Server 2019+).
+  LoanDesk - one-step installer for Windows 10 / 11 (and Windows Server 2019+).
 
 .DESCRIPTION
   Installs Node.js LTS and MariaDB with winget (if missing), creates the database and its user,
@@ -426,15 +426,15 @@ if ($AdminPass) {
 }
 if ($cred.Count) {
   $cred = @($cred | Where-Object { $_ -notmatch '^Admin console:' })
-  if ($cred.Count -and $cred[0] -match '^Loan Recovery') { $cred = @($cred[0], "Admin console: http://localhost:$Port/admin/") + @($cred | Select-Object -Skip 1) }
-  if ($cred[0] -notmatch '^Loan Recovery') { $cred = @("Loan Recovery credentials - updated $stamp", "Admin console: http://localhost:$Port/admin/") + $cred }
-  else { $cred[0] = "Loan Recovery credentials - updated $stamp" }
+  if ($cred.Count -and $cred[0] -match '^(Loan Recovery|LoanDesk)') { $cred = @($cred[0], "Admin console: http://localhost:$Port/admin/") + @($cred | Select-Object -Skip 1) }
+  if ($cred[0] -notmatch '^(Loan Recovery|LoanDesk)') { $cred = @("LoanDesk credentials - updated $stamp", "Admin console: http://localhost:$Port/admin/") + $cred }
+  else { $cred[0] = "LoanDesk credentials - updated $stamp" }
   Write-TextFile $CredFile (($cred -join "`r`n") + "`r`n")
   Protect-File $CredFile
 }
 
 # ------------------------------------------------------------------ background service
-Step 'Starting the Loan Recovery server'
+Step 'Starting the LoanDesk server'
 Stop-AppServer
 
 $log = Join-Path $AppDir 'logs\server.log'
@@ -446,12 +446,12 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
   -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
-  -Description 'Loan Recovery server (Node.js)' -Force | Out-Null
+  -Description 'LoanDesk server (Node.js)' -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
 
 if ($Public) {
-  if (-not (Get-NetFirewallRule -DisplayName 'Loan Recovery' -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName 'Loan Recovery' -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Private, Domain | Out-Null
+  if (-not (Get-NetFirewallRule -DisplayName 'LoanDesk', 'Loan Recovery' -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -DisplayName 'LoanDesk' -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Private, Domain | Out-Null
   }
 }
 
@@ -465,7 +465,7 @@ if (-not $ok) {
 }
 
 # ------------------------------------------------------------------ summary
-Step 'Done - Loan Recovery is running'
+Step 'Done - LoanDesk is running'
 Write-Host ''
 Write-Host "  Field app     : http://localhost:$Port/"
 Write-Host "  Admin console : http://localhost:$Port/admin/"

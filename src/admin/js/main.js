@@ -21,13 +21,13 @@ const PAGES = [
 // ---------- login ----------
 
 function renderLogin(message = '') {
-  document.title = 'Sign in · Loan Recovery Admin';
+  document.title = 'Sign in · LoanDesk Admin';
   $root.innerHTML = `
     <div class="login">
       <section class="login-art">
         <div>
           <img src="../icons/icon-192.png" alt="">
-          <h1>Loan Recovery<br>Admin Console</h1>
+          <h1>LoanDesk<br>Admin Console</h1>
           <p>Manage field staff, loan portfolios and imports for every branch from one place.</p>
           <ul>
             <li>${icon('users')} Officers, supervisors and admins</li>
@@ -98,7 +98,7 @@ function renderShell() {
       <aside class="sidebar" id="sidebar" aria-label="Main navigation">
         <div class="brand">
           <img src="../icons/icon-192.png" alt="">
-          <div><b>Loan Recovery</b><small>ADMIN CONSOLE</small></div>
+          <div><b>LoanDesk</b><small>ADMIN CONSOLE</small></div>
         </div>
         <nav class="nav" id="nav">
           <div class="nav-label">Overview</div>
@@ -207,7 +207,7 @@ export async function route() {
     else a.removeAttribute('aria-current');
   });
   document.getElementById('page-title').textContent = page.label;
-  document.title = `${page.label} · Loan Recovery Admin`;
+  document.title = `${page.label} · LoanDesk Admin`;
   const el = document.getElementById('view');
   const mySeq = ++seq;
   el.onclick = el.onchange = el.oninput = el.onsubmit = null;

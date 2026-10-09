@@ -2,7 +2,7 @@
 #   sudo systemctl daemon-reload && sudo systemctl enable --now loan-recovery
 #   journalctl -u loan-recovery -f
 [Unit]
-Description=Loan Recovery server
+Description=LoanDesk server
 After=network.target mariadb.service
 Wants=mariadb.service
 

@@ -1,5 +1,5 @@
 # Alternative to nginx: Caddy obtains and renews the HTTPS certificate automatically.
-recovery.example.com {
+loandesk.datahaat.com {
     encode gzip
     header Strict-Transport-Security "max-age=31536000; includeSubDomains"
     request_body {

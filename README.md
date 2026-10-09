@@ -1,11 +1,13 @@
-# Loan Recovery
+# LoanDesk
+
+**LoanDesk** is a loan recovery app for field collection teams. It is planned to run at `https://loandesk.datahaat.com`. Internal names, such as the `loan_recovery` database, the `loan-recovery` service and the `/opt/loan-recovery` / `C:\LoanRecovery` folders, keep their original spelling so existing installs keep working.
 
 A loan collection system with three parts:
 
 | Part | Who | Where |
 |---|---|---|
-| **Field app**: installable phone app (PWA) | Field officers and supervisors | `https://<your-domain>/` |
-| **Admin console**: responsive web console | Head office admins | `https://<your-domain>/admin/` |
+| **Field app**: installable phone app (PWA) | Field officers and supervisors | `https://loandesk.datahaat.com/` |
+| **Admin console**: responsive web console | Head office admins | `https://loandesk.datahaat.com/admin/` |
 | **Server**: Node.js API with a **MariaDB** database | | Serves both of the above |
 
 No build step is needed. The app is plain HTML, CSS and JavaScript, and the server's only runtime dependencies are `mariadb` and `exceljs`.
@@ -21,7 +23,7 @@ sudo bash ~/sampleone/scripts/install.sh --demo        # --demo adds sample data
 
 At the end it prints the admin password, which is also saved in `/root/loan-recovery-credentials.txt` (readable by root only). Open `http://localhost:8080/admin/` and sign in as **ADMIN**.
 
-- **HTTPS on a public server:** point your domain's DNS at the machine, open ports 80 and 443, then run `sudo bash ~/sampleone/scripts/install.sh --domain recovery.example.com`. Caddy obtains the certificate.
+- **HTTPS on a public server:** point your domain's DNS at the machine, open ports 80 and 443, then run `sudo bash ~/sampleone/scripts/install.sh --domain loandesk.datahaat.com`. Caddy obtains the certificate.
 - **Updating:** `git -C ~/sampleone pull && sudo bash ~/sampleone/scripts/install.sh`. The database, data and passwords are kept.
 - **Other options:** `--port`, `--app-dir`, `--db-name`, and `--public` (listen on your network without HTTPS, for testing only). Run with `--help` to see them all.
 
@@ -138,11 +140,11 @@ HTTPS is required: phones only allow the camera, GPS, offline mode and installin
 1. Copy the project to `/opt/loan-recovery`, create `.env` (keep `HOST=127.0.0.1`), and run `npm ci --omit=dev`.
 2. Install `deploy/loan-recovery.service` as a systemd service. It starts at boot and restarts on failure.
 3. Set up HTTPS with **either**:
-   - `deploy/nginx.conf` plus `certbot --nginx -d your-domain`, **or**
+   - `deploy/nginx.conf` plus `certbot --nginx -d loandesk.datahaat.com`, **or**
    - `deploy/Caddyfile`, where Caddy gets and renews the certificate itself.
 
    Both allow 50 MB request bodies for imports and slips, and add HSTS.
-4. Open `https://your-domain/admin/` and sign in.
+4. Open `https://loandesk.datahaat.com/admin/` and sign in.
 
 **Maintenance:** while the app is stopped, the proxy answers 502. The field app treats that as "server unreachable": officers keep working, and queued records are sent automatically when the server returns. Records are de-duplicated, so a resend never double-counts.
 

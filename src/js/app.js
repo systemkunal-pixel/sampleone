@@ -109,7 +109,8 @@ function viewLogin() {
   return `
     <section class="setup">
       <img class="logo" src="icons/icon-192.png" alt="">
-      <h1>Loan Recovery</h1>
+      <h1>LoanDesk</h1>
+      <p class="muted small" style="margin-top:-6px">Loan recovery for field teams</p>
       <p class="muted">${expired ? 'Your session has expired. Log in again to continue.' : 'Log in with your officer code and PIN.'}</p>
       ${outbox.length ? `<p class="note warn-note">${plural(outbox.length, 'record')} on this phone still need to reach the server. They'll be sent as soon as you log in.</p>` : ''}
       <form id="login-form" class="card form">

@@ -422,7 +422,7 @@ export async function checkAgainstDb(conn, valid, errors) {
 
 export async function buildTemplate() {
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Loan Recovery';
+  wb.creator = 'LoanDesk';
   const brand = 'FF0F5132';
   const head = (ws) => {
     const r = ws.getRow(1);

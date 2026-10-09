@@ -13,7 +13,7 @@ function printGuide(list, roleLabel) {
   const area = document.createElement('div');
   area.id = 'print-area';
   area.innerHTML = `
-    <h1>Loan Recovery — ${esc(roleLabel)} guide</h1>
+    <h1>LoanDesk — ${esc(roleLabel)} guide</h1>
     <p class="muted">Printed ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
     ${CATEGORIES.map((c) => {
       const items = list.filter((t) => t.category === c.id);

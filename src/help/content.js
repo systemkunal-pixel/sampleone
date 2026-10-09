@@ -1,4 +1,4 @@
-// Loan Recovery — user manual, how-to guides, routines, troubleshooting and glossary.
+// LoanDesk — user manual, how-to guides, routines, troubleshooting and glossary.
 // One source for the field app (officers, supervisors) and the admin console.
 // Topic bodies are static, trusted HTML written here; never put user data into them.
 
@@ -19,10 +19,10 @@ export const TOPICS = [
   // ------------------------------------------------------------------ getting started
   {
     id: 'welcome', category: 'start', audience: ALL,
-    title: 'Welcome to Loan Recovery',
+    title: 'Welcome to LoanDesk',
     summary: 'What the app does and who uses which part.',
     body: `
-      <p>Loan Recovery helps your team collect overdue loan payments in the field and keeps head office up to date in real time.</p>
+      <p>LoanDesk helps your team collect overdue loan payments in the field and keeps head office up to date in real time.</p>
       <table class="help-table">
         <tr><th>Who</th><th>Uses</th><th>Main jobs</th></tr>
         <tr><td><b>Field officer</b></td><td>Phone app</td><td>Visit borrowers, collect payments, issue receipts, record bank deposits, log visits and promises to pay.</td></tr>

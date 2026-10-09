@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Loan Recovery — one-step installer for Ubuntu / Debian.
+# LoanDesk — one-step installer for Ubuntu / Debian.
 #
 # Installs Node.js 22 and MariaDB (if missing), creates the database and its user, copies the app to
 # /opt/loan-recovery, creates the first admin, and runs the server as a service on port 8080.
@@ -8,7 +8,7 @@
 # Usage (from the project folder, as root):
 #   sudo bash scripts/install.sh                          # install / update
 #   sudo bash scripts/install.sh --demo                   # also load demo data (empty database only)
-#   sudo bash scripts/install.sh --domain app.example.com # also set up HTTPS with Caddy (Let's Encrypt)
+#   sudo bash scripts/install.sh --domain loandesk.datahaat.com # also set up HTTPS with Caddy (Let's Encrypt)
 #
 # Options:  --app-dir DIR (default /opt/loan-recovery)   --port N (default 8080)   --db-name NAME (default loan_recovery)
 #           --public (listen on all interfaces, e.g. for testing on your LAN without HTTPS)
@@ -164,7 +164,7 @@ fi
 if [[ -n "$ADMIN_PASS" ]]; then
   umask 077
   cat > "$CRED_FILE" <<CRED
-Loan Recovery — created $(date '+%Y-%m-%d %H:%M')
+LoanDesk — created $(date '+%Y-%m-%d %H:%M')
 Admin console : http://localhost:$PORT/admin/${DOMAIN:+   (public: https://$DOMAIN/admin/)}
 Admin code    : ADMIN
 Admin password: $ADMIN_PASS
@@ -174,12 +174,12 @@ CRED
 fi
 
 # ---------------------------------------------------------------- service
-say "Starting the Loan Recovery server"
+say "Starting the LoanDesk server"
 NODE_BIN="$(command -v node)"
 if has_systemd; then
   cat > /etc/systemd/system/loan-recovery.service <<UNIT
 [Unit]
-Description=Loan Recovery server
+Description=LoanDesk server
 After=network.target mariadb.service
 Wants=mariadb.service
 
@@ -242,7 +242,7 @@ CADDY
 fi
 
 # ---------------------------------------------------------------- summary
-say "Done — Loan Recovery is running"
+say "Done — LoanDesk is running"
 cat <<SUMMARY
 
   Field app     : http://localhost:$PORT/${DOMAIN:+          https://$DOMAIN/}

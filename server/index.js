@@ -7,7 +7,7 @@ const pool = createPool(config.db);
 await migrate(pool);
 const server = createServer(createApp({ pool, sessionDays: config.sessionDays }));
 server.listen(config.port, config.host, () => {
-  console.log(`Loan Recovery server on http://${config.host}:${config.port} (db ${config.db.database}@${config.db.host})`);
+  console.log(`LoanDesk server on http://${config.host}:${config.port} (db ${config.db.database}@${config.db.host})`);
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

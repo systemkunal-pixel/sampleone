@@ -1,4 +1,4 @@
--- Loan Recovery schema for MariaDB 10.6+. Applied automatically at server start (idempotent).
+-- LoanDesk schema for MariaDB 10.6+. Applied automatically at server start (idempotent).
 -- Statements are split on semicolons, so don't use one inside a string or comment.
 -- Timestamps are local time in the server's configured TZ (default Asia/Kolkata).
 
