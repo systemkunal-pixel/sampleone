@@ -4,6 +4,7 @@ import { hashPin, validPin, pinRule, verifyPin, SUPPORT_CODE } from './auth.js';
 import { companyEntitlements } from './plans.js';
 import { loadLoans, upsertLoan, withTx, audit, now } from './db.js';
 import { HttpError, send } from './http.js';
+import { EMAIL } from './mail.js';
 import { readImportFile, normalise, checkAgainstDb, buildTemplate, ImportError, MAX_FILE_BYTES } from './importer.js';
 
 const ROLES = ['officer', 'supervisor', 'admin'];
@@ -12,10 +13,22 @@ const IMPORT_BODY = Math.ceil(MAX_FILE_BYTES * 1.4) + 1024 * 1024;
 const COMMIT_BODY = 40 * 1024 * 1024;
 
 const str = (v) => String(v ?? '').trim();
+const SUMMARY = ['off', 'daily', 'weekly'];
+
+/** Admins may have an email address (password resets, summaries); field staff don't. */
+function emailFields(b, role, current = {}) {
+  if (role !== 'admin') return { email: null, summary: current.summary_email || 'daily' };
+  let email = b.email !== undefined ? str(b.email).toLowerCase() || null : current.email ?? null;
+  if (email && (!EMAIL.test(email) || email.length > 190)) throw new HttpError(400, 'Enter a valid email address, or leave it empty.');
+  const summary = b.summaryEmail !== undefined ? str(b.summaryEmail) : current.summary_email || 'daily';
+  if (!SUMMARY.includes(summary)) throw new HttpError(400, 'Choose how often to send the summary email.');
+  return { email, summary };
+}
 
 function userRow(u) {
   return {
     code: u.code, name: u.name, role: u.role, branch: u.branch, active: Boolean(u.active),
+    email: u.email || null, summaryEmail: u.summary_email || 'daily',
     lastLoginAt: u.last_login_at, createdAt: u.created_at, loans: Number(u.loans || 0),
   };
 }
@@ -192,12 +205,13 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     if (branch.length < 2 || branch.length > 100) throw new HttpError(400, 'Enter the branch.');
     if (!ROLES.includes(role)) throw new HttpError(400, 'Choose a role.');
     if (!validPin(b.pin, role)) throw new HttpError(400, pinRule(role));
+    const mail = emailFields(b, role);
     // Codes are unique across all companies on LoanDesk: people sign in with code + PIN only.
     const [dup] = await pool.query('SELECT code FROM users WHERE code = ?', [code]);
     if (dup) throw new HttpError(409, `Code ${code} is already taken.`);
     if (role === 'officer') await assertOfficerSeat(pool, user.companyId);
-    await pool.query('INSERT INTO users (company_id, code, name, role, branch, pin_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [user.companyId, code, name, role, branch, await hashPin(b.pin), now()]);
+    await pool.query('INSERT INTO users (company_id, code, name, role, branch, pin_hash, email, summary_email, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [user.companyId, code, name, role, branch, await hashPin(b.pin), mail.email, mail.summary, now()]);
     await audit(pool, user, 'user_created', code, { role, branch });
     return { ok: true };
   });
@@ -216,6 +230,7 @@ export function mountAdmin(router, { pool, authed, readJson }) {
       if (next.name.length < 2 || next.name.length > 100) throw new HttpError(400, 'Enter the full name.');
       if (next.branch.length < 2 || next.branch.length > 100) throw new HttpError(400, 'Enter the branch.');
       if (!ROLES.includes(next.role)) throw new HttpError(400, 'Choose a role.');
+      const mail = emailFields(b, next.role, u);
       const self = u.code === user.code;
       if (self && (next.role !== 'admin' || !next.active)) throw new HttpError(400, "You can't remove your own admin access.");
       if (u.role === 'admin' && u.active && (next.role !== 'admin' || !next.active) && (await activeAdmins(conn, user.companyId)) <= 1) {
@@ -234,13 +249,15 @@ export function mountAdmin(router, { pool, authed, readJson }) {
         if (!validPin(b.pin, next.role)) throw new HttpError(400, `Changing to/from admin needs a new credential. ${pinRule(next.role)}`);
         pinHash = await hashPin(b.pin);
       }
-      await conn.query('UPDATE users SET name = ?, role = ?, branch = ?, active = ?, pin_hash = ?, updated_at = ? WHERE id = ?',
-        [next.name, next.role, next.branch, next.active, pinHash, now(), u.id]);
+      await conn.query('UPDATE users SET name = ?, role = ?, branch = ?, active = ?, pin_hash = ?, email = ?, summary_email = ?, updated_at = ? WHERE id = ?',
+        [next.name, next.role, next.branch, next.active, pinHash, mail.email, mail.summary, now(), u.id]);
       // Role, branch or status changes take effect immediately: end existing sessions.
       if (next.role !== u.role || next.branch !== u.branch || !next.active || credentialClassChanges) {
         await conn.query('DELETE FROM sessions WHERE user_id = ?', [u.id]);
       }
       const changes = Object.fromEntries(Object.entries(next).filter(([k, v]) => String(v) !== String(k === 'active' ? Boolean(u.active) : u[k])));
+      if ((mail.email || null) !== (u.email || null)) changes.email = mail.email || '(removed)';
+      if (next.role === 'admin' && mail.summary !== u.summary_email) changes.summaryEmail = mail.summary;
       await audit(conn, user, next.active === Boolean(u.active) ? 'user_updated' : next.active ? 'user_activated' : 'user_deactivated', u.code, changes);
       return { ok: true };
     });

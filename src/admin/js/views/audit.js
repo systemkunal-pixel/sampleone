@@ -6,7 +6,8 @@ import { setQuery } from '../main.js';
 // English descriptions, translated where shown: describe() returns t(ACTIONS[action]).
 /* i18n: t('signed in') t('failed to sign in') t('created user') t('updated user') t('reactivated user')
    t('deactivated user') t('reset the PIN/password of') t('changed their password') t('imported loans — import #')
-   t('reassigned loans to') t('verified deposit') t('rejected deposit') t('had a payment refused') t('had a visit refused') */
+   t('reassigned loans to') t('verified deposit') t('rejected deposit') t('had a payment refused') t('had a visit refused')
+   t('asked for a password-reset email') t('asked for a password reset, but has no email address') t('set a new password from the reset email') */
 const ACTIONS = {
   login: 'signed in',
   login_failed: 'failed to sign in',
@@ -22,6 +23,9 @@ const ACTIONS = {
   deposit_rejected: 'rejected deposit',
   reject_payment: 'had a payment refused',
   reject_visit: 'had a visit refused',
+  password_reset_requested: 'asked for a password-reset email',
+  password_reset_no_email: 'asked for a password reset, but has no email address',
+  password_reset_by_email: 'set a new password from the reset email',
 };
 export const describe = (action) => (ACTIONS[action] ? t(ACTIONS[action]) : action.replace(/_/g, ' '));
 

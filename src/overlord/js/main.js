@@ -9,6 +9,7 @@ import * as audit from './views/audit.js';
 import * as guide from './views/guide.js';
 import * as updates from './views/updates.js';
 import * as leads from './views/leads.js';
+import * as mail from './views/mail.js';
 
 const $root = document.getElementById('root');
 
@@ -19,6 +20,7 @@ const PAGES = [
   { path: 'support', label: 'Support sessions', icon: 'headset', view: support },
   { path: 'plans', label: 'Plans & features', icon: 'layers', view: plans },
   { path: 'updates', label: 'Update & diagnostics', icon: 'refresh', view: updates },
+  { path: 'mail', label: 'Email', icon: 'mail', view: mail },
   { path: 'overlords', label: 'Overlord accounts', icon: 'crown', view: overlords },
   { path: 'audit', label: 'Overlord audit log', icon: 'audit', view: audit },
   { path: 'guide', label: 'Guide', icon: 'book', view: guide },
@@ -154,11 +156,11 @@ function renderShell() {
           <div class="nav-label">Platform</div>
           ${PAGES.slice(0, 3).map(navLink).join('')}
           <div class="nav-label">Control</div>
-          ${PAGES.slice(3, 6).map(navLink).join('')}
+          ${PAGES.slice(3, 7).map(navLink).join('')}
           <div class="nav-label">Accountability</div>
-          ${PAGES.slice(6, 8).map(navLink).join('')}
+          ${PAGES.slice(7, 9).map(navLink).join('')}
           <div class="nav-label">Help</div>
-          ${navLink(PAGES[8])}
+          ${navLink(PAGES[9])}
         </nav>
         <div class="sidebar-foot">Signed out after 60 minutes idle.<br>Admin console: <a href="../admin/" target="_blank" rel="noopener">open</a></div>
       </aside>

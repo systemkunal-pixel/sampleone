@@ -118,8 +118,8 @@ export function registerUpdateRoutes(R, { pool, readJson }) {
     const [busy] = await pool.query("SELECT id, to_version, status FROM platform_updates WHERE status IN ('staged', 'applying')");
     if (busy) await refuse(`Update to ${busy.to_version} is already ${busy.status}.`, 409);
     const res = await pool.query(
-      `INSERT INTO platform_updates (from_version, to_version, file_name, sha256, size, schema_changes, staged_by, staged_at, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'staged')`,
+      `INSERT INTO platform_updates (from_version, to_version, file_name, sha256, size, schema_changes, staged_by, staged_at, status, mailed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'staged', 0)`,
       [summary.from, summary.version, name, hash, buf.length, summary.schemaChanges, ctx.overlord.email, now()]);
     await event(ctx, 'stage', 'ok', { fileName: name, size: buf.length, updateId: res.insertId, detail: `Staged ${summary.from} → ${summary.version} and queued for the updater agent.` });
     return { id: res.insertId };

@@ -1,8 +1,11 @@
 // HTTP API + static hosting of the field app (/) and admin console (/admin/). One origin for everything.
 import { readFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { isoDate, lastReceiptSeq } from '../src/js/logic.js';
-import { createSession, userForToken, deleteSession, verifyPin, LoginThrottle } from './auth.js';
+import { createSession, userForToken, deleteSession, verifyPin, hashPin, validPin, pinRule, sha256, sqlTime, LoginThrottle } from './auth.js';
+import { createMailer } from './mail.js';
+import { resetEmail, RESET_MINUTES } from './emails.js';
 import { companyEntitlements } from './plans.js';
 import { mountOverlord, clientIp } from './overlord-api.js';
 import { mountLeads } from './leads.js';
@@ -44,8 +47,9 @@ const LOCKED = {
   archived: (name) => `${name}'s LoanDesk account is closed. Please contact LoanDesk support.`,
 };
 
-export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR }) {
+export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR, mailer = createMailer(pool) }) {
   const throttle = new LoginThrottle();
+  const resetThrottle = new LoginThrottle({ maxFails: 5, lockMs: 60 * 60 * 1000 });
   const router = new Router();
   const json = (req, max = MAX_BODY) => readJson(req, max);
 
@@ -115,6 +119,58 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR }) {
     await pool.query('UPDATE support_sessions SET ended_at = ? WHERE id = ? AND ended_at IS NULL', [now(), user.support.id]);
     await deleteSession(pool, token);
     return { ok: true };
+  });
+
+  /**
+   * "Forgot password?" on the admin sign-in page. Emails a one-time link to the admin's address on file.
+   * The answer is the same whether or not the code exists, so it can't be used to find admin codes.
+   */
+  router.add('POST', '/api/password/forgot', async (req) => {
+    const { code } = await json(req, 4096);
+    const key = String(code || '').trim().toUpperCase();
+    if (!key) throw new HttpError(400, 'Enter your admin code.');
+    const ip = clientIp(req) || '?';
+    for (const k of [`ip:${ip}`, `code:${key}`]) {
+      if (resetThrottle.lockedFor(k)) throw new HttpError(429, 'Too many reset requests. Try again in an hour.');
+    }
+    resetThrottle.fail(`ip:${ip}`);
+    resetThrottle.fail(`code:${key}`);
+    const done = { ok: true, message: 'If this admin code has an email address on file, a reset link is on its way. It works for 30 minutes.' };
+    const [u] = await pool.query(
+      `SELECT u.id, u.code, u.name, u.email, u.company_id, c.name AS company_name FROM users u JOIN companies c ON c.id = u.company_id
+       WHERE u.code = ? AND u.role = 'admin' AND u.active = 1 AND c.status = 'active'`, [key]);
+    if (!u) return done;
+    if (!u.email) {
+      await audit(pool, { code: u.code, companyId: u.company_id }, 'password_reset_no_email', u.code, null);
+      return done;
+    }
+    const site = await mailer.siteUrl();
+    if (!site || !(await mailer.configured())) return done;
+    const token = randomBytes(32).toString('base64url');
+    await pool.query('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL', [u.id]);
+    await pool.query('INSERT INTO password_resets (token_hash, user_id, created_at, expires_at, ip) VALUES (?, ?, ?, ?, ?)',
+      [sha256(token), u.id, now(), sqlTime(new Date(Date.now() + RESET_MINUTES * 60000)), ip]);
+    await audit(pool, { code: u.code, companyId: u.company_id }, 'password_reset_requested', u.code, { ip });
+    mailer.queue(resetEmail(u, `${site}/admin/#reset=${token}`));
+    return done;
+  });
+
+  /** Sets a new admin password with the link from the reset email. */
+  router.add('POST', '/api/password/reset', async (req) => {
+    const { token, password } = await json(req, 4096);
+    if (!validPin(password, 'admin')) throw new HttpError(400, pinRule('admin'));
+    return withTx(pool, async (conn) => {
+      const [r] = await conn.query(
+        `SELECT r.token_hash, u.id, u.code, u.company_id FROM password_resets r JOIN users u ON u.id = r.user_id
+         WHERE r.token_hash = ? AND r.used_at IS NULL AND r.expires_at > ? AND u.active = 1 AND u.role = 'admin' FOR UPDATE`,
+        [sha256(String(token || '')), now()]);
+      if (!r) throw new HttpError(400, 'This reset link has expired or was already used. Ask for a new one.');
+      await conn.query('UPDATE password_resets SET used_at = ? WHERE token_hash = ?', [now(), r.token_hash]);
+      await conn.query('UPDATE users SET pin_hash = ?, updated_at = ? WHERE id = ?', [await hashPin(password), now(), r.id]);
+      await conn.query('DELETE FROM sessions WHERE user_id = ?', [r.id]);
+      await audit(conn, { code: r.code, companyId: r.company_id }, 'password_reset_by_email', r.code, null);
+      return { ok: true, code: r.code };
+    });
   });
 
   router.add('POST', '/api/logout', async (req) => {
@@ -221,8 +277,8 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR }) {
   });
 
   mountAdmin(router, { pool, authed: (req) => authed(req, 'admin'), readJson: json });
-  const leads = mountLeads(router, { pool, readJson: json, clientIp });
-  mountOverlord(router, { pool, readJson: json, leads });
+  const leads = mountLeads(router, { pool, readJson: json, clientIp, mailer });
+  mountOverlord(router, { pool, readJson: json, leads, mailer });
 
   async function serveStatic(req, res) {
     if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Method not allowed.');

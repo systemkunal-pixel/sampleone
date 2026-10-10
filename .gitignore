@@ -9,3 +9,4 @@ backups/
 *.ldpatch
 dist/
 *.pem
+secret.key

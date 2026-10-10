@@ -11,6 +11,7 @@ const LABELS = {
   feature_override: 'Feature override', overlord_added: 'Added overlord', overlord_activated: 'Activated overlord',
   overlord_deactivated: 'Deactivated overlord', authenticator_reset: 'Reset an authenticator', overlord_password_reset: 'Reset an overlord password (server)',
   overlord_2fa_reset: 'Reset an authenticator (server)',
+  mail_settings_updated: 'Changed email settings', mail_test: 'Sent a test email', lead_updated: 'Updated a demo request',
 };
 const label = (a) => LABELS[a] || a.replace(/_/g, ' ');
 

@@ -206,6 +206,21 @@ The last five backups are kept in `backups/`. **History** and **Activity** recor
 
 The installers now run `server/supervisor.js` (the updater agent) instead of `server/index.js`. It keeps the web server running and restarts it if it stops. Changes to the agent itself take effect the next time the service restarts (e.g. after re-running the installer). On Windows the installer sets `DB_BIN_DIR` so the agent can find `mariadb-dump`.
 
+## Email (SMTP2GO)
+
+Set up in the overlord console under **Email**: server `mail.smtp2go.com`, port `2525`, STARTTLS, an SMTP user from
+SMTP2GO, and a *from* address on a domain verified in SMTP2GO. **Send test email** shows the server's answer if it fails.
+
+LoanDesk then sends:
+- **New demo requests**, **update results** and **support sessions** to the alert list (blank = every active overlord).
+- **Password-reset links** to company admins who click *Forgot password?* on `/admin/` (needs their email address and the site address in the settings; links work once, for 30 minutes).
+- **Daily or weekly summaries** at 8 am to each admin who has an email address; each admin chooses daily, weekly (Mondays) or off in *Users*.
+- A notice to the company (contact and admins) when an overlord ticks *Email the company* while entering as support.
+
+Every email is listed under **Sent emails**. The SMTP password is stored encrypted (AES-256-GCM) with a key in
+`secret.key` in the app folder, or `MAIL_SECRET_KEY` in `.env`; a database backup alone does not reveal it. On a new
+server, type the SMTP password again.
+
 ## Brand assets
 
 - `src/icons/icon.svg`: the app icon (LD monogram) as SVG. PNG sizes for phones are alongside it.

@@ -15,7 +15,8 @@ const USAGE = `Usage: npm run admin -- <command> [options]
   migrate                                   create/upgrade tables
   list-companies
   add-user --company BRMC --code FO27 --name "Priya Mishra" --role officer|supervisor|admin --branch "Lucknow Rural" --pin 1234
-                                            (admins: --pin is a password of 10+ chars with letters and digits)
+                                            (admins: --pin is a password of 10+ chars with letters and digits;
+                                             optional --email for password-reset links and summary emails)
   set-pin --code FO27 --pin 4321            reset a PIN/password (logs the user out everywhere)
   deactivate --code FO27                    block a user and end their sessions
                                             (user codes are unique across all companies)
@@ -57,13 +58,13 @@ export async function codeTaken(conn, code) {
   return Boolean(u);
 }
 
-export async function addUser(conn, { companyId, code, name, role, branch, pin }) {
+export async function addUser(conn, { companyId, code, name, role, branch, pin, email = null }) {
   if (!['officer', 'supervisor', 'admin'].includes(role)) throw new Error('--role must be officer, supervisor or admin');
   if (!validPin(pin, role)) throw new Error(pinRule(role));
   if (code.toUpperCase() === SUPPORT_CODE) throw new Error(`${SUPPORT_CODE} is reserved for LoanDesk support.`);
   if (await codeTaken(conn, code)) throw new Error(`User code ${code.toUpperCase()} is already used. Every user needs a code of their own.`);
-  await conn.query('INSERT INTO users (company_id, code, name, role, branch, pin_hash) VALUES (?, ?, ?, ?, ?, ?)', [
-    companyId, code.toUpperCase(), name, role, branch, await hashPin(pin),
+  await conn.query('INSERT INTO users (company_id, code, name, role, branch, pin_hash, email) VALUES (?, ?, ?, ?, ?, ?, ?)', [
+    companyId, code.toUpperCase(), name, role, branch, await hashPin(pin), role === 'admin' ? email : null,
   ]);
 }
 

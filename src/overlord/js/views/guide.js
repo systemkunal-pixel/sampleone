@@ -54,6 +54,19 @@ export async function render(el) {
       </ol>
       <p>Prefer a quiet time: the site is offline for about a minute. Phones keep working offline and send their records afterwards.</p>
 
+      <h2>Email (SMTP2GO)</h2>
+      <ol>
+        <li>In SMTP2GO: verify your sender domain (<b>Sending → Verified Senders</b>) and create an SMTP user (<b>Sending → SMTP Users</b>).</li>
+        <li><b>Email</b> here: server <code>mail.smtp2go.com</code>, port <code>2525</code>, STARTTLS, that SMTP user's username and password,
+          and a <b>from</b> address on the verified domain. Check the site address, then <b>Save</b> and <b>Send test email</b>.</li>
+        <li>Give each company admin an email address (on their user record, or when you add an admin here) so they can use
+          <b>Forgot password?</b> and receive the daily or weekly summary.</li>
+      </ol>
+      <p>LoanDesk then emails: new demo requests, update results and support sessions to the alert list (blank = every overlord);
+        reset links to admins who ask; summaries at 8 am (weekly ones on Mondays). Every email is listed under <b>Sent emails</b>,
+        with the reason when one fails. The SMTP password is stored encrypted with a key in <code>secret.key</code> in the app folder —
+        moving to a new server means entering the password again.</p>
+
       <h2>Accountability</h2>
       <ul>
         <li><b>Support sessions</b> — every entry: who, which company, reason, start, end, IP and what was changed.</li>

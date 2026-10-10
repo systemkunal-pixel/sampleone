@@ -17,6 +17,7 @@ export function companyCell(c, { link = true } = {}) {
 /** Opens the admin console inside the company as LoanDesk support (45 minutes, logged). */
 export async function enterSupport(c) {
   if (c.status === 'archived') return toast('Reopen the company first to look inside.', 'bad');
+  const { mailReady } = await api('me');
   await dialog({
     title: `Enter ${esc(c.name)}`,
     ok: 'Enter as support',
@@ -27,21 +28,25 @@ export async function enterSupport(c) {
         <label class="field"><span>Reason <span class="req">*</span></span>
           <input class="input" name="reason" required minlength="5" maxlength="300" placeholder="e.g. Customer call: import fails on row 12" autofocus>
           <span class="hint">Kept permanently with the session.</span></label>
-        <label class="row" style="display:flex;gap:8px;align-items:center;color:var(--muted)">
+        ${mailReady ? `<label class="row" style="display:flex;gap:8px;align-items:center">
+          <input type="checkbox" name="notify"> Email the company that support entered
+          <span class="muted small">(company contact and admins with an email address)</span></label>`
+        : `<label class="row" style="display:flex;gap:8px;align-items:center;color:var(--muted)">
           <input type="checkbox" name="notify" disabled> Email the company that support entered
-          <span class="badge">needs email setup</span></label>
+          <a class="badge" href="#/mail">set up email first</a></label>`}
       </div>`,
     onOk: async (data) => {
       // Open the tab now, while the click still counts as a user action, then point it at the session.
       const win = window.open('', '_blank');
       try {
-        const s = await api(`companies/${c.id}/support`, { method: 'POST', body: { reason: data.reason, notifyOwner: false } });
+        const s = await api(`companies/${c.id}/support`, { method: 'POST', body: { reason: data.reason, notifyOwner: data.notify === 'on' } });
         const url = `../admin/#support=${encodeURIComponent(s.token)}`;
         if (win) {
           win.opener = null;
           win.location.href = url;
         } else location.href = url;
-        toast(`Support session started in ${c.name}`);
+        if (data.notify === 'on' && !s.notified) toast(`Support session started, but the email to ${c.name} was not sent (see Email → Sent emails)`, 'bad');
+        else toast(`Support session started in ${c.name}${s.notified ? ' · company emailed' : ''}`);
       } catch (err) {
         win?.close();
         throw err;

@@ -389,6 +389,20 @@ export const TOPICS = [
     ],
     tips: ['Admin sessions end after 12 hours or when you close the browser.'],
   },
+  {
+    id: 'admin-email', category: 'howto', audience: ['admin'],
+    title: 'Email: forgotten password and summary emails',
+    summary: 'Add your email address so you can reset your own password and get a daily or weekly summary.',
+    steps: [
+      'Open <b>Users</b>, click the <b>pencil</b> next to your name and type your <b>Email</b>.',
+      'Choose <b>Summary email</b>: every morning, every Monday or off. Then <b>Save changes</b>.',
+      'Forgot your password? On the sign-in page click <b>Forgot password?</b>, type your admin code and open the link in the email within 30 minutes.',
+    ],
+    tips: [
+      'The summary shows collections, deposits waiting for a supervisor and overdue amounts, branch by branch. It arrives at about 8 am.',
+      'No email on your account, or no email arrived? Another admin of your company can set a new password for you in <b>Users</b> (key icon).',
+    ],
+  },
 
   // ------------------------------------------------------------------ routines & rollout
   {

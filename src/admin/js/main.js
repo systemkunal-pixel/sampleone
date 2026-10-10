@@ -1,4 +1,4 @@
-import { session, login, logout, api, me, adoptSupportToken, setExpiredHandler } from './api.js';
+import { session, login, logout, api, me, adoptSupportToken, setExpiredHandler, forgotPassword, resetPassword } from './api.js';
 import { esc, icon, initials, toast, dialog, closeDrawer } from './ui.js';
 import { t, tr, loadLang, getLang, langSelect, bindLangSelect } from '../../i18n/i18n.js';
 import { loadHelpLang } from '../../help/content.js';
@@ -35,11 +35,11 @@ async function loadContext() {
 
 // ---------- login ----------
 
-let loginMessage = ''; // kept so a language switch can re-render the sign-in screen as it was
+// Kept so a language switch can re-render the sign-in screens as they were.
+let loginMessage = '';
+let loginScreen = () => renderLogin(loginMessage);
 
-function renderLogin(message = '') {
-  loginMessage = message;
-  document.title = t('Sign in · LoanDesk Admin');
+function loginFrame(inner) {
   $root.innerHTML = `
     <div class="login">
       <section class="login-art">
@@ -56,7 +56,15 @@ function renderLogin(message = '') {
         </div>
         <small>${t('Authorised personnel only. Activity is logged.')}</small>
       </section>
-      <section class="login-form">
+      <section class="login-form">${inner}</section>
+    </div>`;
+}
+
+function renderLogin(message = '') {
+  loginMessage = message;
+  loginScreen = () => renderLogin(loginMessage);
+  document.title = t('Sign in · LoanDesk Admin');
+  loginFrame(`
         <form class="login-card form" id="login-form" novalidate>
           <div class="login-card-head">
             <div>
@@ -77,12 +85,12 @@ function renderLogin(message = '') {
           </label>
           <div class="error-box" id="login-error" role="alert"></div>
           <button class="btn primary block" type="submit">${t('Sign in')}</button>
+          <button class="btn ghost block" type="button" id="forgot">${t('Forgot password?')}</button>
           <p class="muted small">${t('Sessions end after 12 hours or when you close the browser.')}</p>
-        </form>
-      </section>
-    </div>`;
+        </form>`);
   const form = document.getElementById('login-form');
   bindLangSelect(form);
+  document.getElementById('forgot').onclick = () => renderForgot(form.code.value.trim());
   form.querySelector('[data-toggle-pw]').onclick = () => {
     form.pin.type = form.pin.type === 'password' ? 'text' : 'password';
   };
@@ -105,6 +113,89 @@ function renderLogin(message = '') {
       err.textContent = tr(ex.message);
       btn.disabled = false;
       btn.textContent = t('Sign in');
+    }
+  };
+}
+
+/** "Forgot password?": the reset link goes to the email address on the admin's account. */
+function renderForgot(code = '') {
+  loginScreen = () => renderForgot(code);
+  document.title = t('Reset password · LoanDesk Admin');
+  loginFrame(`
+    <form class="login-card form" id="forgot-form" novalidate>
+      <div class="login-card-head">
+        <div><h2>${t('Reset password')}</h2><p class="muted">${t('We will email a reset link to the address on your admin account.')}</p></div>
+        ${langSelect('login-lang', esc(t('Language')))}
+      </div>
+      <label class="field"><span>${t('Admin code')}</span>
+        <input class="input" name="code" required autocomplete="username" autocapitalize="characters" value="${esc(code)}" autofocus>
+      </label>
+      <div class="error-box" id="forgot-error" role="alert"></div>
+      <button class="btn primary block" type="submit">${t('Email me a reset link')}</button>
+      <button class="btn ghost block" type="button" id="back">${t('Back to sign in')}</button>
+      <p class="muted small">${t('No email address on your account? Ask another admin of your company to set a new password for you in Users.')}</p>
+    </form>`);
+  const form = document.getElementById('forgot-form');
+  bindLangSelect(form);
+  form.code.oninput = () => (code = form.code.value.trim());
+  document.getElementById('back').onclick = () => renderLogin();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const err = document.getElementById('forgot-error');
+    err.textContent = '';
+    if (!form.code.value.trim()) {
+      err.textContent = t('Enter your admin code.');
+      return;
+    }
+    const btn = form.querySelector('[type=submit]');
+    btn.disabled = true;
+    try {
+      await forgotPassword(form.code.value.trim());
+      renderLogin(t('If this admin code has an email address on file, a reset link is on its way. It works for 30 minutes.'));
+    } catch (ex) {
+      err.textContent = tr(ex.message);
+      btn.disabled = false;
+    }
+  };
+}
+
+/** Opened from the link in the reset email (#reset=<token>). */
+function renderReset(token) {
+  loginScreen = () => renderReset(token);
+  document.title = t('Reset password · LoanDesk Admin');
+  loginFrame(`
+    <form class="login-card form" id="reset-form" novalidate>
+      <div class="login-card-head">
+        <div><h2>${t('Choose a new password')}</h2><p class="muted">${t('At least 10 characters, with letters and numbers.')}</p></div>
+        ${langSelect('login-lang', esc(t('Language')))}
+      </div>
+      <label class="field"><span>${t('New password')}</span>
+        <input class="input" type="password" name="next" required minlength="10" autocomplete="new-password" autofocus></label>
+      <label class="field"><span>${t('Confirm new password')}</span>
+        <input class="input" type="password" name="confirm" required autocomplete="new-password"></label>
+      <div class="error-box" id="reset-error" role="alert"></div>
+      <button class="btn primary block" type="submit">${t('Update password')}</button>
+      <button class="btn ghost block" type="button" id="back">${t('Back to sign in')}</button>
+    </form>`);
+  const form = document.getElementById('reset-form');
+  bindLangSelect(form);
+  document.getElementById('back').onclick = () => renderLogin();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const err = document.getElementById('reset-error');
+    err.textContent = '';
+    if (form.next.value !== form.confirm.value) {
+      err.textContent = t('The new passwords do not match.');
+      return;
+    }
+    const btn = form.querySelector('[type=submit]');
+    btn.disabled = true;
+    try {
+      await resetPassword(token, form.next.value);
+      renderLogin(t('Password updated. Sign in with your new password.'));
+    } catch (ex) {
+      err.textContent = tr(ex.message);
+      btn.disabled = false;
     }
   };
 }
@@ -252,6 +343,14 @@ let seq = 0;
 
 export async function route() {
   closeDrawer();
+  const reset = /^#reset=([\w-]+)/.exec(location.hash);
+  if (reset) {
+    // Keep the token out of the address bar and history.
+    history.replaceState(null, '', location.pathname);
+    session.clear();
+    document.getElementById('shell')?.remove();
+    return renderReset(reset[1]);
+  }
   const handover = /^#support=([\w-]+)/.exec(location.hash);
   if (handover) {
     history.replaceState(null, '', '#/dashboard');
@@ -334,7 +433,7 @@ document.getElementById('drawer').addEventListener('click', (e) => {
 // Language: re-render everything in the new language (the shell, or the sign-in screen).
 window.addEventListener('langchange', async () => {
   await loadHelpLang(getLang());
-  if (!session.get()) return renderLogin(loginMessage);
+  if (!session.get()) return loginScreen();
   document.getElementById('shell')?.remove();
   route();
 });

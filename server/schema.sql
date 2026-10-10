@@ -311,3 +311,58 @@ CREATE TABLE IF NOT EXISTS leads (
   updated_at  DATETIME     NULL,
   KEY ix_leads_at (at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+;
+
+-- v6: email. SMTP settings (one row, edited in the overlord console), every message sent, admin
+-- email addresses and summary preferences, and password-reset links.
+CREATE TABLE IF NOT EXISTS mail_settings (
+  id              TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+  host            VARCHAR(190) NULL,
+  port            SMALLINT UNSIGNED NULL,
+  security        ENUM('starttls', 'ssl', 'none') NOT NULL DEFAULT 'starttls',
+  username        VARCHAR(190) NULL,
+  password_enc    VARCHAR(500) NULL,
+  from_name       VARCHAR(100) NULL,
+  from_email      VARCHAR(190) NULL,
+  site_url        VARCHAR(190) NULL,
+  alert_to        VARCHAR(500) NULL,
+  alert_leads     TINYINT(1)   NOT NULL DEFAULT 1,
+  alert_updates   TINYINT(1)   NOT NULL DEFAULT 1,
+  alert_support   TINYINT(1)   NOT NULL DEFAULT 1,
+  summaries       TINYINT(1)   NOT NULL DEFAULT 1,
+  updated_by      VARCHAR(190) NULL,
+  updated_at      DATETIME     NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS mail_log (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  at          DATETIME     NOT NULL,
+  kind        VARCHAR(30)  NOT NULL,
+  recipients  VARCHAR(1000) NOT NULL,
+  subject     VARCHAR(250) NOT NULL,
+  company_id  INT UNSIGNED NULL,
+  status      ENUM('sending', 'sent', 'failed', 'skipped') NOT NULL,
+  error       VARCHAR(500) NULL,
+  dedupe_key  VARCHAR(100) NULL,
+  UNIQUE KEY uq_mail_log_dedupe (dedupe_key),
+  KEY ix_mail_log_at (at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(190) NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS summary_email ENUM('off', 'daily', 'weekly') NOT NULL DEFAULT 'daily';
+
+CREATE TABLE IF NOT EXISTS password_resets (
+  token_hash  CHAR(64)     NOT NULL PRIMARY KEY,
+  user_id     INT UNSIGNED NOT NULL,
+  created_at  DATETIME     NOT NULL,
+  expires_at  DATETIME     NOT NULL,
+  used_at     DATETIME     NULL,
+  ip          VARCHAR(45)  NULL,
+  KEY ix_password_resets_user (user_id),
+  CONSTRAINT fk_password_resets_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- The overlords are told how each update ended. Updates staged from v6 on start at mailed = 0;
+-- older rows (NULL) count as told.
+ALTER TABLE platform_updates ADD COLUMN IF NOT EXISTS mailed TINYINT(1) NULL;
+UPDATE platform_updates SET mailed = 1 WHERE mailed IS NULL

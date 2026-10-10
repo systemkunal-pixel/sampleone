@@ -114,6 +114,8 @@ function openCreate() {
         <label class="field"><span>Admin code <span class="req">*</span></span><input class="input" name="adminCode" required maxlength="12" autocapitalize="characters" value="ADMIN"></label>
         <label class="field"><span>Admin name <span class="req">*</span></span><input class="input" name="adminName" required maxlength="100"></label>
       </div>
+      <label class="field"><span>Admin email</span><input class="input" name="adminEmail" type="email" maxlength="190">
+        <span class="hint">Optional. Lets them use “Forgot password?” and get the summary email.</span></label>
       <label class="field"><span>Admin password <span class="req">*</span></span>
         <div class="input-group"><input class="input" name="adminPassword" type="password" required minlength="10" autocomplete="new-password">
           <button type="button" class="btn" data-gen>${icon('dice')} Generate</button></div>
@@ -138,7 +140,7 @@ function openCreate() {
         method: 'POST',
         body: {
           name: f.name, code: f.code, plan: f.plan, contactName: f.contactName, contactEmail: f.contactEmail, contactPhone: f.contactPhone,
-          admin: { code: f.adminCode, name: f.adminName, password: f.adminPassword },
+          admin: { code: f.adminCode, name: f.adminName, password: f.adminPassword, email: f.adminEmail },
         },
       });
       closeDrawer();
@@ -203,7 +205,9 @@ function adminDialog(c, admin) {
       <div class="form-row">
         <label class="field"><span>Admin code</span><input class="input" name="code" required maxlength="12" autocapitalize="characters" autofocus></label>
         <label class="field"><span>Full name</span><input class="input" name="name" required maxlength="100"></label>
-      </div>`}
+      </div>
+      <label class="field"><span>Email</span><input class="input" name="email" type="email" maxlength="190">
+        <span class="hint">Optional. For “Forgot password?” and the summary email.</span></label>`}
       <label class="field"><span>Password</span>
         <div class="input-group"><input class="input" name="password" type="password" required minlength="10" autocomplete="new-password" ${reset ? 'autofocus' : ''}>
           <button type="button" class="btn" data-generate="password" data-kind="password">${icon('dice')} Generate</button></div>
@@ -254,7 +258,7 @@ async function renderDetail(el, id) {
           ${admins.length ? `<div class="table-wrap"><table class="data responsive">
             <thead><tr><th>Admin</th><th>Status</th><th>Last sign-in</th><th class="right">Actions</th></tr></thead>
             <tbody>${admins.map((a) => `<tr>
-              <td class="primary"><div class="cell-main">${esc(a.name)}</div><div class="cell-sub">${esc(a.code)}</div></td>
+              <td class="primary"><div class="cell-main">${esc(a.name)}</div><div class="cell-sub">${esc(a.code)}${a.email ? ` · ${esc(a.email)}` : ' · no email'}</div></td>
               <td data-label="Status">${a.active ? '<span class="badge ok"><span class="dot"></span>Active</span>' : '<span class="badge"><span class="dot"></span>Inactive</span>'}</td>
               <td data-label="Last sign-in">${esc(ago(a.lastLoginAt))}</td>
               <td class="actions"><div class="row-actions"><button class="btn sm ghost" data-action="reset" data-code="${esc(a.code)}">${icon('key')} New password</button></div></td>

@@ -71,6 +71,12 @@ export async function login(code, pin) {
   return res.user;
 }
 
+/** "Forgot password?": asks the server to email a reset link to the admin's address on file. */
+export const forgotPassword = (code) => request('../api/password/forgot', { method: 'POST', body: { code }, auth: false });
+
+/** Sets a new password with the token from the reset link. */
+export const resetPassword = (token, password) => request('../api/password/reset', { method: 'POST', body: { token, password }, auth: false });
+
 /** Who is signed in and what their company's plan includes: { user, plan, features, maxOfficers }. */
 export const me = () => request('../api/me');
 

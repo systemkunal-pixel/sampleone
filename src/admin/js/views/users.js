@@ -33,6 +33,24 @@ function credentialField(role, required = true) {
     </label>`;
 }
 
+/** Admins only: an email address for password-reset links and the summary email. */
+function mailFields(u) {
+  const freq = u?.summaryEmail || 'daily';
+  return `
+    <div class="form-row">
+      <label class="field"><span>${t('Email')}</span>
+        <input class="input" name="email" type="email" maxlength="190" autocomplete="off" value="${esc(u?.email || '')}" placeholder="${esc(t('e.g. name@company.in'))}">
+        <span class="hint">${t('Used for “Forgot password?” links and the summary email.')}</span>
+      </label>
+      <label class="field"><span>${t('Summary email')}</span>
+        <select class="select" name="summaryEmail">
+          ${[['daily', t('Every morning')], ['weekly', t('Every Monday')], ['off', t('Off')]].map(([v, l]) => `<option value="${v}" ${v === freq ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+        </select>
+        <span class="hint">${t('Collections, deposits waiting and overdue, sent at 8 am.')}</span>
+      </label>
+    </div>`;
+}
+
 function userForm(u) {
   const editing = Boolean(u);
   const role = u?.role || 'officer';
@@ -61,6 +79,7 @@ function userForm(u) {
         <datalist id="branch-list">${cache.branches.map((b) => `<option value="${esc(b)}">`).join('')}</datalist>
         <span class="hint">${t('Officers only see loans of their branch; supervisors verify deposits for it.')}</span>
       </label>
+      <div data-mail-slot>${isAdmin(role) ? mailFields(u) : ''}</div>
       <div data-cred-slot>${editing ? '' : credentialField(role)}</div>
       ${editing && u.role === 'officer' && u.loans ? `<div class="info-box">${icon('loans')} ${(() => {
         const link = `<a href="#/loans?officer=${encodeURIComponent(u.code)}">${t('reassign the loans')}</a>`;
@@ -83,6 +102,9 @@ function openUserForm(u) {
   d.onchange = (e) => {
     if (e.target.name !== 'role') return;
     const role = e.target.value;
+    const mail = d.querySelector('[data-mail-slot]');
+    if (isAdmin(role) && !mail.innerHTML.trim()) mail.innerHTML = mailFields(u);
+    if (!isAdmin(role)) mail.innerHTML = '';
     if (!u) slot.innerHTML = credentialField(role);
     // Switching between admin and field roles needs a new credential of the other kind.
     else slot.innerHTML = isAdmin(role) !== isAdmin(u.role)
@@ -111,7 +133,11 @@ function openUserForm(u) {
     try {
       if (u) {
         await api(`users/${encodeURIComponent(u.code)}`, {
-          method: 'PATCH', body: { name: data.name, role: data.role, branch: data.branch, ...(data.pin ? { pin: data.pin } : {}) },
+          method: 'PATCH',
+          body: {
+            name: data.name, role: data.role, branch: data.branch, ...(data.pin ? { pin: data.pin } : {}),
+            ...(isAdmin(data.role) ? { email: data.email, summaryEmail: data.summaryEmail } : {}),
+          },
         });
         toast(t('{code} updated', { code: u.code }));
       } else {
@@ -237,7 +263,7 @@ export async function render(el, q, alive) {
               <tr data-code="${esc(u.code)}">
                 <td class="primary" data-label="${esc(t('User'))}"><div style="display:flex;gap:10px;align-items:center">
                   <span class="avatar">${esc(initials(u.name))}</span>
-                  <div><div class="cell-main">${esc(u.name)}</div><div class="cell-sub">${esc(u.code)}</div></div></div></td>
+                  <div><div class="cell-main">${esc(u.name)}</div><div class="cell-sub">${esc(u.code)}${u.email ? ` · ${esc(u.email)}` : ''}</div></div></div></td>
                 <td data-label="${esc(t('Role'))}">${roleBadge(u.role)}</td>
                 <td data-label="${esc(t('Branch'))}">${esc(u.branch)}</td>
                 <td class="right num" data-label="${esc(t('Loans'))}">${u.role === 'officer' ? `<a href="#/loans?officer=${encodeURIComponent(u.code)}">${num(u.loans)}</a>` : '<span class="muted">—</span>'}</td>

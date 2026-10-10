@@ -2,10 +2,14 @@ import { createServer } from 'node:http';
 import { config } from './config.js';
 import { createPool, migrate } from './db.js';
 import { createApp } from './app.js';
+import { createMailer } from './mail.js';
+import { startMailJobs } from './emails.js';
 
 const pool = createPool(config.db);
 await migrate(pool);
-const server = createServer(createApp({ pool, sessionDays: config.sessionDays }));
+const mailer = createMailer(pool);
+const server = createServer(createApp({ pool, sessionDays: config.sessionDays, mailer }));
+startMailJobs(pool, mailer);
 server.listen(config.port, config.host, () => {
   console.log(`LoanDesk server on http://${config.host}:${config.port} (db ${config.db.database}@${config.db.host})`);
 });

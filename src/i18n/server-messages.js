@@ -29,6 +29,9 @@ export default [
   'Give a reason for rejecting the deposit.',
   'Deposit not found.',
   'Already {status} by {by}.',
+  'Enter your admin code.',
+  'Too many reset requests. Try again in an hour.',
+  'This reset link has expired or was already used. Ask for a new one.',
 
   // server/records.js
   'Malformed record.',
@@ -57,6 +60,7 @@ export default [
   'PIN must be 4–8 digits.',
 
   // server/admin-api.js
+  'Choose how often to send the summary email.',
   '{code} is not a field officer.',
   '{code} is deactivated.',
   '{code} belongs to {branch}, not {otherBranch}.',

@@ -2,12 +2,13 @@
 // the overlord console lists and tracks them.
 import { HttpError } from './http.js';
 import { now } from './db.js';
+import { leadAlert } from './emails.js';
 
 const PER_HOUR = 5;
 const STATUSES = ['new', 'contacted', 'demo_done', 'won', 'lost'];
 const str = (v, max) => String(v ?? '').trim().slice(0, max);
 
-export function mountLeads(router, { pool, readJson, clientIp }) {
+export function mountLeads(router, { pool, readJson, clientIp, mailer }) {
   const recent = new Map(); // ip -> timestamps of the last hour
 
   router.add('POST', '/api/leads', async (req) => {
@@ -28,10 +29,14 @@ export function mountLeads(router, { pool, readJson, clientIp }) {
     const officers = Number.parseInt(b.officers, 10);
     times.push(Date.now());
     recent.set(ip, times);
+    const lead = {
+      name, company, phone, email: email || null, officers: Number.isFinite(officers) && officers >= 0 ? Math.min(officers, 1e6) : null,
+      message: str(b.message, 1000) || null,
+    };
     await pool.query(
       'INSERT INTO leads (at, name, company, phone, email, officers, message, lang, ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [now(), name, company, phone, email || null, Number.isFinite(officers) && officers >= 0 ? Math.min(officers, 1e6) : null,
-        str(b.message, 1000) || null, str(b.lang, 5) || null, ip]);
+      [now(), name, company, phone, lead.email, lead.officers, lead.message, str(b.lang, 5) || null, ip]);
+    if (mailer) await leadAlert(mailer, lead).catch((err) => console.error('Lead email:', err.message));
     return { ok: true };
   });
 

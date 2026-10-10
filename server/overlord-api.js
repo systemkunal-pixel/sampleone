@@ -14,6 +14,8 @@ import { newSecret, verifyCode, otpauthUrl } from './totp.js';
 import { PLANS, PLAN_CODES, FEATURES, FEATURE_KEYS, planMatrix, planLimits, companyEntitlements } from './plans.js';
 import { addUser, seedDemo, addOverlord, demoLogins, codeTaken } from './admin.js';
 import { registerUpdateRoutes } from './updates-api.js';
+import { EMAIL } from './mail.js';
+import { supportAlerts } from './emails.js';
 
 const TICKET_MINUTES = 5; // between the password step and the authenticator code
 const IDLE_MINUTES = 60; // overlord sessions slide on use…
@@ -132,7 +134,7 @@ async function companyFigures(pool, { includeArchived = false } = {}) {
 
 // ---------- routes ----------
 
-export function mountOverlord(router, { pool, readJson, leads }) {
+export function mountOverlord(router, { pool, readJson, leads, mailer }) {
   const throttle = new LoginThrottle();
 
   async function authed(req) {
@@ -219,7 +221,48 @@ export function mountOverlord(router, { pool, readJson, leads }) {
     return { ok: true };
   });
 
-  R('GET', '/me', async ({ ctx }) => ({ overlord: ctx.overlord, idleMinutes: IDLE_MINUTES, supportMinutes: SUPPORT_MINUTES }));
+  R('GET', '/me', async ({ ctx }) => ({
+    overlord: ctx.overlord, idleMinutes: IDLE_MINUTES, supportMinutes: SUPPORT_MINUTES, mailReady: await mailer.configured(),
+  }));
+
+  // ----- email (SMTP) -----
+
+  R('GET', '/mail', async () => ({ settings: await mailer.settings(), log: await mailer.log() }));
+
+  R('PUT', '/mail', async ({ req, ctx }) => {
+    const b = await readJson(req);
+    const before = await mailer.settings();
+    let settings;
+    try {
+      settings = await mailer.save(b, ctx.overlord.email);
+    } catch (err) {
+      if (err.sqlState) throw err;
+      throw new HttpError(400, err.message);
+    }
+    const changed = ['host', 'port', 'security', 'username', 'fromName', 'fromEmail', 'siteUrl', 'alertTo', 'alertLeads', 'alertUpdates', 'alertSupport', 'summaries']
+      .filter((k) => String(before[k]) !== String(settings[k]));
+    if (b.password !== undefined && b.password !== mailer.PASSWORD_MASK) changed.push('password');
+    await oaudit(pool, ctx, 'mail_settings_updated', null, { changed });
+    return { settings };
+  });
+
+  R('POST', '/mail/test', async ({ req, ctx }) => {
+    const { to } = await readJson(req);
+    const address = str(to).toLowerCase() || ctx.overlord.email;
+    if (!EMAIL.test(address)) throw new HttpError(400, 'Enter the email address to send the test to.');
+    if (!(await mailer.configured())) throw new HttpError(400, 'Save the SMTP settings first.');
+    const r = await mailer.send({
+      to: address, kind: 'test', subject: 'LoanDesk test email',
+      message: {
+        title: 'Email works',
+        intro: `${ctx.overlord.name} sent this test from the LoanDesk overlord console.`,
+        lines: ['If you can read this, LoanDesk can send demo-request alerts, update results, support notices, password resets and summaries.'],
+      },
+    });
+    await oaudit(pool, ctx, 'mail_test', null, { to: address, status: r.status });
+    if (r.status !== 'sent') throw new HttpError(502, `The test email was not sent: ${r.error}`);
+    return { ok: true, to: address };
+  });
 
   R('POST', '/me/password', async ({ req, ctx }) => {
     const { current, next } = await readJson(req);
@@ -266,7 +309,7 @@ export function mountOverlord(router, { pool, readJson, leads }) {
     const c = await companyRow(pool, params.id);
     const [figures] = (await companyFigures(pool, { includeArchived: true })).filter((f) => f.id === c.id);
     const admins = await pool.query(
-      "SELECT code, name, branch, active, last_login_at AS lastLoginAt FROM users WHERE company_id = ? AND role = 'admin' ORDER BY active DESC, code", [c.id]);
+      "SELECT code, name, branch, email, active, last_login_at AS lastLoginAt FROM users WHERE company_id = ? AND role = 'admin' ORDER BY active DESC, code", [c.id]);
     const ent = await companyEntitlements(pool, c.id);
     const support = await pool.query(
       `SELECT ss.id, ss.reason, ss.started_at AS startedAt, ss.ended_at AS endedAt, ss.expires_at AS expiresAt, o.name AS overlord
@@ -311,7 +354,9 @@ export function mountOverlord(router, { pool, readJson, leads }) {
     const name = str(a.name);
     if (name.length < 2) throw new HttpError(400, "Enter the admin's full name.");
     if (!validPin(a.password, 'admin')) throw new HttpError(400, pinRule('admin'));
-    return { code, name, role: 'admin', branch: 'Head Office', pin: a.password };
+    const email = str(a.email).toLowerCase() || null;
+    if (email && !EMAIL.test(email)) throw new HttpError(400, "The admin's email address is not valid.");
+    return { code, name, role: 'admin', branch: 'Head Office', pin: a.password, email };
   }
 
   R('POST', '/companies', async ({ req, ctx }) => {
@@ -420,18 +465,28 @@ export function mountOverlord(router, { pool, readJson, leads }) {
     const { reason, notifyOwner } = await readJson(req);
     const why = str(reason).slice(0, 300);
     if (why.length < 5) throw new HttpError(400, 'Say why you are entering this account (at least a few words). It is logged.');
-    return withTx(pool, async (conn) => {
+    const started = await withTx(pool, async (conn) => {
       const c = await companyRow(conn, params.id);
       if (c.status === 'archived') throw new HttpError(409, 'Reopen the company first to look inside.');
       const expires = minutesFromNow(SUPPORT_MINUTES);
-      // Email isn't set up yet, so the company can't be notified; the request is recorded as not sent.
       const res = await conn.query(
         'INSERT INTO support_sessions (overlord_id, company_id, reason, started_at, expires_at, ip, owner_notified) VALUES (?, ?, ?, ?, ?, ?, 0)',
         [ctx.overlord.id, c.id, why, now(), expires, ctx.ip]);
       const token = await createSupportSession(conn, c.id, res.insertId, expires);
       await oaudit(conn, ctx, 'support_started', c.id, { reason: why, supportId: res.insertId, notifyRequested: Boolean(notifyOwner) });
-      return { token, supportId: res.insertId, expiresAt: expires.replace(' ', 'T'), minutes: SUPPORT_MINUTES, notified: false };
+      return { company: c, token, supportId: res.insertId, expiresAt: expires.replace(' ', 'T') };
     });
+    // Emails go out after the session exists; a mail problem never blocks support access.
+    let notified = false;
+    try {
+      ({ ownerNotified: notified } = await supportAlerts(pool, mailer, {
+        company: started.company, overlord: ctx.overlord, reason: why, minutes: SUPPORT_MINUTES, notifyOwner: Boolean(notifyOwner),
+      }));
+      if (notified) await pool.query('UPDATE support_sessions SET owner_notified = 1 WHERE id = ?', [started.supportId]);
+    } catch (err) {
+      console.error('Support email:', err.message);
+    }
+    return { token: started.token, supportId: started.supportId, expiresAt: started.expiresAt, minutes: SUPPORT_MINUTES, notified };
   });
 
   R('GET', '/support-sessions', async ({ query }) => {
