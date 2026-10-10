@@ -17,8 +17,8 @@ function signingKey() {
   try {
     const key = publicKeyFrom(process.env.UPDATE_PUBLIC_KEY);
     return key ? { key, fingerprint: keyFingerprint(key) } : null;
-  } catch {
-    return { key: null, error: 'UPDATE_PUBLIC_KEY in .env is not a valid key.' };
+  } catch (err) {
+    return { key: null, error: /PRIVATE/.test(err.message) ? err.message : 'UPDATE_PUBLIC_KEY in .env is not a valid key.' };
   }
 }
 

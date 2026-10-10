@@ -46,6 +46,10 @@ export function generateSigningKeys() {
 export function publicKeyFrom(text) {
   const t = String(text || '').trim();
   if (!t) return null;
+  // An Ed25519 private key (PKCS#8) starts with MC4CAQAw in base64; never accept one here.
+  if (t.includes('PRIVATE KEY') || t.startsWith('MC4CAQAw')) {
+    throw new Error('UPDATE_PUBLIC_KEY holds a PRIVATE key. Make a new key pair and use the public key (it starts with MCowBQYDK2VwAyEA).');
+  }
   if (t.includes('BEGIN PUBLIC KEY')) return createPublicKey(t);
   return createPublicKey({ key: Buffer.from(t, 'base64'), format: 'der', type: 'spki' });
 }

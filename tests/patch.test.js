@@ -128,3 +128,10 @@ test('a package that fails its checks changes nothing', async () => {
   assert.equal(JSON.parse(readFileSync(join(current, 'package.json'))).version, '1.0.0');
   assert.ok(!d.calls.includes('stop'));
 });
+
+test('a private key pasted as UPDATE_PUBLIC_KEY is refused with a clear message', () => {
+  const { privatePem } = generateSigningKeys();
+  const body = privatePem.replace(/-----[^-]+-----/g, '').replace(/\s/g, '');
+  assert.throws(() => publicKeyFrom(body), /PRIVATE key/);
+  assert.throws(() => publicKeyFrom(privatePem), /PRIVATE key/);
+});

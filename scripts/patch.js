@@ -30,10 +30,13 @@ try {
     const { privatePem, publicKey } = generateSigningKeys();
     mkdirSync(dirname(keyFile), { recursive: true });
     writeFileSync(keyFile, privatePem, { mode: 0o600 });
-    console.log(`Private signing key saved to ${keyFile}`);
-    console.log('Keep it safe and private (a backup on a USB stick is a good idea). Anyone with it can sign updates.\n');
-    console.log("Add this line to the .env file of every LoanDesk server, then restart LoanDesk:\n");
+    const pubFile = join(dirname(keyFile), 'update-public-key.txt');
+    writeFileSync(pubFile, `UPDATE_PUBLIC_KEY=${publicKey}\n`);
+    console.log(`PRIVATE signing key saved to ${keyFile}`);
+    console.log('  Keep it secret and backed up (e.g. on a USB stick). Never copy it to a server or send it to anyone.\n');
+    console.log(`PUBLIC key (safe to put on servers) saved to ${pubFile}:\n`);
     console.log(`UPDATE_PUBLIC_KEY=${publicKey}\n`);
+    console.log('Add that line to the .env file of every LoanDesk server, then restart LoanDesk.');
     console.log(`Key fingerprint: ${keyFingerprint(publicKeyFrom(publicKey))}`);
   } else if (cmd === 'build') {
     if (!existsSync(keyFile)) throw new Error(`No signing key at ${keyFile}. Run: node scripts/patch.js keygen`);
