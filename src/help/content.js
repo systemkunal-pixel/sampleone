@@ -402,6 +402,7 @@ export const TOPICS = [
     tips: [
       'Next month’s file: new accounts in a pincode that has an agent are assigned to that agent automatically; existing accounts keep their agent.',
       'Use <b>Pincodes without an agent</b> to see what is still open. Click a pincode to see its accounts in <b>Loans</b>.',
+      '<b>Recruitment plan</b> shows where to hire agents so that every pincode is within the range (20 km by default) of one, with at most the number of accounts you set per agent. Download it as Excel for the hiring team. After hiring, enter the agent’s <b>home pincode</b> in Users and use <b>Agents → Pincodes in range</b>.',
     ],
   },
   {

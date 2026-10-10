@@ -384,3 +384,8 @@ CREATE TABLE IF NOT EXISTS area_agents (
   updated_at    DATETIME     NOT NULL,
   PRIMARY KEY (company_id, branch, pincode)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+;
+
+-- v8: where each field agent lives and how far they travel, for the pincode recruitment plan.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS base_pincode CHAR(6) NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS range_km SMALLINT UNSIGNED NULL

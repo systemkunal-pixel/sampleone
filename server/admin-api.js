@@ -5,6 +5,8 @@ import { companyEntitlements } from './plans.js';
 import { loadLoans, upsertLoan, withTx, audit, now } from './db.js';
 import { HttpError, send } from './http.js';
 import { EMAIL } from './mail.js';
+import { locate, within, recruitmentPlan } from './geo.js';
+import ExcelJS from 'exceljs';
 import { readImportFile, normalise, checkAgainstDb, buildTemplate, ImportError, MAX_FILE_BYTES } from './importer.js';
 
 const ROLES = ['officer', 'supervisor', 'admin'];
@@ -14,6 +16,17 @@ const COMMIT_BODY = 40 * 1024 * 1024;
 
 const str = (v) => String(v ?? '').trim();
 const SUMMARY = ['off', 'daily', 'weekly'];
+
+/** Field officers may have a home pincode and a travel range (Areas → agents and the recruitment plan). */
+function baseFields(b, role, current = {}) {
+  if (role !== 'officer') return { pincode: null, range: null };
+  const pincode = b.basePincode !== undefined ? str(b.basePincode).replace(/\s/g, '') || null : current.base_pincode ?? null;
+  if (pincode && !/^[1-9]\d{5}$/.test(pincode)) throw new HttpError(400, 'Home pincode must be 6 digits.');
+  const raw = b.rangeKm !== undefined ? b.rangeKm : current.range_km;
+  const range = raw === null || raw === undefined || raw === '' ? null : Number(raw);
+  if (range !== null && (!Number.isInteger(range) || range < 1 || range > 200)) throw new HttpError(400, 'Range must be 1–200 km.');
+  return { pincode, range };
+}
 
 /** Admins may have an email address (password resets, summaries); field staff don't. */
 function emailFields(b, role, current = {}) {
@@ -29,6 +42,7 @@ function userRow(u) {
   return {
     code: u.code, name: u.name, role: u.role, branch: u.branch, active: Boolean(u.active),
     email: u.email || null, summaryEmail: u.summary_email || 'daily',
+    basePincode: u.base_pincode || null, rangeKm: u.range_km ?? null,
     lastLoginAt: u.last_login_at, createdAt: u.created_at, loans: Number(u.loans || 0),
   };
 }
@@ -210,12 +224,14 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     if (!ROLES.includes(role)) throw new HttpError(400, 'Choose a role.');
     if (!validPin(b.pin, role)) throw new HttpError(400, pinRule(role));
     const mail = emailFields(b, role);
+    const home = baseFields(b, role);
     // Codes are unique across all companies on LoanDesk: people sign in with code + PIN only.
     const [dup] = await pool.query('SELECT code FROM users WHERE code = ?', [code]);
     if (dup) throw new HttpError(409, `Code ${code} is already taken.`);
     if (role === 'officer') await assertOfficerSeat(pool, user.companyId);
-    await pool.query('INSERT INTO users (company_id, code, name, role, branch, pin_hash, email, summary_email, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [user.companyId, code, name, role, branch, await hashPin(b.pin), mail.email, mail.summary, now()]);
+    await pool.query(
+      'INSERT INTO users (company_id, code, name, role, branch, pin_hash, email, summary_email, base_pincode, range_km, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [user.companyId, code, name, role, branch, await hashPin(b.pin), mail.email, mail.summary, home.pincode, home.range, now()]);
     await audit(pool, user, 'user_created', code, { role, branch });
     return { ok: true };
   });
@@ -235,6 +251,7 @@ export function mountAdmin(router, { pool, authed, readJson }) {
       if (next.branch.length < 2 || next.branch.length > 100) throw new HttpError(400, 'Enter the branch.');
       if (!ROLES.includes(next.role)) throw new HttpError(400, 'Choose a role.');
       const mail = emailFields(b, next.role, u);
+      const home = baseFields(b, next.role, u);
       const self = u.code === user.code;
       if (self && (next.role !== 'admin' || !next.active)) throw new HttpError(400, "You can't remove your own admin access.");
       if (u.role === 'admin' && u.active && (next.role !== 'admin' || !next.active) && (await activeAdmins(conn, user.companyId)) <= 1) {
@@ -253,8 +270,10 @@ export function mountAdmin(router, { pool, authed, readJson }) {
         if (!validPin(b.pin, next.role)) throw new HttpError(400, `Changing to/from admin needs a new credential. ${pinRule(next.role)}`);
         pinHash = await hashPin(b.pin);
       }
-      await conn.query('UPDATE users SET name = ?, role = ?, branch = ?, active = ?, pin_hash = ?, email = ?, summary_email = ?, updated_at = ? WHERE id = ?',
-        [next.name, next.role, next.branch, next.active, pinHash, mail.email, mail.summary, now(), u.id]);
+      await conn.query(
+        `UPDATE users SET name = ?, role = ?, branch = ?, active = ?, pin_hash = ?, email = ?, summary_email = ?, base_pincode = ?, range_km = ?,
+           updated_at = ? WHERE id = ?`,
+        [next.name, next.role, next.branch, next.active, pinHash, mail.email, mail.summary, home.pincode, home.range, now(), u.id]);
       // Role, branch or status changes take effect immediately: end existing sessions.
       if (next.role !== u.role || next.branch !== u.branch || !next.active || credentialClassChanges) {
         await conn.query('DELETE FROM sessions WHERE user_id = ?', [u.id]);
@@ -262,6 +281,8 @@ export function mountAdmin(router, { pool, authed, readJson }) {
       const changes = Object.fromEntries(Object.entries(next).filter(([k, v]) => String(v) !== String(k === 'active' ? Boolean(u.active) : u[k])));
       if ((mail.email || null) !== (u.email || null)) changes.email = mail.email || '(removed)';
       if (next.role === 'admin' && mail.summary !== u.summary_email) changes.summaryEmail = mail.summary;
+      if ((home.pincode || null) !== (u.base_pincode || null)) changes.basePincode = home.pincode || '(removed)';
+      if ((home.range ?? null) !== (u.range_km ?? null)) changes.rangeKm = home.range;
       await audit(conn, user, next.active === Boolean(u.active) ? 'user_updated' : next.active ? 'user_activated' : 'user_deactivated', u.code, changes);
       return { ok: true };
     });
@@ -422,6 +443,101 @@ export function mountAdmin(router, { pool, authed, readJson }) {
           }),
         })),
       })),
+    };
+  });
+
+  /** One row per pincode of a branch: accounts, overdue and agent (open loans only). */
+  async function pincodeFigures(companyId, branch) {
+    const loans = await portfolio(pool, companyId, { branch });
+    const agents = new Map((await pool.query('SELECT pincode, officer_code FROM area_agents WHERE company_id = ? AND branch = ?', [companyId, branch]))
+      .map((a) => [a.pincode, a.officer_code]));
+    const pins = new Map();
+    for (const l of loans) {
+      if (l.bucket === 'closed' || !l.pincode) continue;
+      if (!pins.has(l.pincode)) pins.set(l.pincode, { pincode: l.pincode, accounts: 0, overdue: 0, unassigned: 0, places: {}, agent: agents.get(l.pincode) || null });
+      const p = pins.get(l.pincode);
+      p.accounts += 1;
+      p.overdue += l.overdue;
+      if (!l.officerCode) p.unassigned += 1;
+      const place = `${l.district || ''}|${l.state || ''}`;
+      p.places[place] = (p.places[place] || 0) + 1;
+    }
+    return [...pins.values()].map(({ places, ...p }) => {
+      const [district, state] = Object.entries(places).sort((a, b) => b[1] - a[1])[0][0].split('|');
+      return { ...p, district, state };
+    });
+  }
+
+  const planParams = (query) => ({
+    range: Math.min(200, Math.max(1, Number(query.get('km')) || 20)),
+    max: Math.min(5000, Math.max(10, Number(query.get('max')) || 250)),
+    min: Math.min(1000, Math.max(0, Number(query.get('min') ?? 20) || 0)),
+    open: query.get('scope') !== 'all',
+  });
+
+  async function plan(user, query) {
+    const branch = str(query.get('branch'));
+    if (!branch) throw new HttpError(400, 'Choose a branch.');
+    const p = planParams(query);
+    const pins = (await pincodeFigures(user.companyId, branch)).filter((x) => !p.open || !x.agent);
+    return { branch, open: p.open, ...recruitmentPlan(pins, p) };
+  }
+
+  R('GET', '/areas/plan', async ({ query, user }) => plan(user, query));
+
+  R('GET', '/areas/plan.xlsx', async ({ res, query, user }) => {
+    const pl = await plan(user, query);
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'LoanDesk';
+    const head = (ws) => {
+      ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F5132' } };
+      ws.views = [{ state: 'frozen', ySplit: 1 }];
+    };
+    const sheet = (name, list) => {
+      const ws = wb.addWorksheet(name);
+      ws.columns = [
+        ['Agent no', 8], ['Recruit in pincode', 12], ['District', 22], ['State', 16], ['Accounts', 10], ['Overdue', 14],
+        ['Farthest km', 11], ['Pincodes covered', 9], ['Covers', 90],
+      ].map(([header, width]) => ({ header, width }));
+      list.forEach((a, i) => ws.addRow([a.no ?? i + 1, a.base.pincode, a.base.district, a.base.state, a.accounts, a.overdue, a.farthestKm,
+        a.pincodes.length, a.pincodes.map((x) => `${x.pincode} (${x.km} km, ${x.accounts})`).join(', ')]));
+      ws.getColumn(6).numFmt = '#,##0';
+      head(ws);
+    };
+    sheet('Agents to recruit', pl.agents);
+    sheet('Thin areas', pl.thin);
+    const detail = wb.addWorksheet('Pincodes');
+    detail.columns = [['Agent no', 8], ['Recruit in pincode', 12], ['Pincode', 10], ['District', 22], ['State', 16], ['Km from base', 11], ['Accounts', 10], ['Overdue', 14]]
+      .map(([header, width]) => ({ header, width }));
+    for (const a of pl.agents) for (const x of a.pincodes) detail.addRow([a.no, a.base.pincode, x.pincode, x.district, x.state, x.km, x.accounts, x.overdue]);
+    detail.getColumn(8).numFmt = '#,##0';
+    head(detail);
+    const about = wb.addWorksheet('About');
+    about.columns = [{ width: 28 }, { width: 80 }];
+    for (const r of [
+      ['Branch', pl.branch], ['Range', `${pl.range} km (straight line; by road usually 20–40% more)`], ['Most accounts per agent', pl.max],
+      ['Smallest agent', `${pl.min} accounts; smaller groups are listed as thin areas`],
+      ['Pincodes', pl.open ? 'Only pincodes without a deputed agent' : 'All pincodes'], ['Made', now()],
+      ['Pincode locations', 'Department of Posts, All India Pincode Directory (Open Government Data Platform India)'],
+    ]) about.addRow(r);
+    send(res, 200, Buffer.from(await wb.xlsx.writeBuffer()), {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="recruitment-plan-${pl.branch.replace(/[^\w-]+/g, '_')}-${pl.range}km.xlsx"`,
+    });
+  });
+
+  /** Pincodes with accounts within an agent's range of their home pincode. */
+  R('GET', '/areas/nearby/:code', async ({ params, query, user }) => {
+    const [o] = await pool.query("SELECT code, name, branch, base_pincode, range_km, active FROM users WHERE company_id = ? AND code = ? AND role = 'officer'",
+      [user.companyId, params.code]);
+    if (!o) throw new HttpError(404, 'User not found.');
+    if (!o.base_pincode) throw new HttpError(400, 'Set the agent’s home pincode first (Users → edit).');
+    const range = Number(query.get('km')) || o.range_km || 20;
+    const pins = await pincodeFigures(user.companyId, o.branch);
+    return {
+      agent: { code: o.code, name: o.name, branch: o.branch, basePincode: o.base_pincode, located: Boolean(locate(o.base_pincode)) },
+      range, pincodes: within(o.base_pincode, pins, range),
     };
   });
 

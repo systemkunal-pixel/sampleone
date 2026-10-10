@@ -595,3 +595,10 @@ details[open] > .area-head > .area-caret { transform: rotate(90deg); }
 .area-district { border-top: 1px solid var(--border); }
 .area-district > .area-head { padding-left: 34px; }
 .area-district .table-wrap { border-top: 1px solid var(--border); }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: -6px 0 18px; border-bottom: 1px solid var(--border); }
+.tabs a { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; color: var(--text-2); text-decoration: none; font-weight: 600; font-size: .9rem; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs a:hover { color: var(--text); }
+.tabs a.active { color: var(--brand); border-bottom-color: var(--brand); }
+.tabs a svg { width: 16px; height: 16px; }
+.field.inline { display: flex; flex-direction: column; gap: 4px; }
+.field.inline span { font-size: .76rem; color: var(--muted); }

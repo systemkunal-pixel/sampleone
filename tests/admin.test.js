@@ -245,3 +245,31 @@ test('areas: a recovery list by pincode, agents deputed per pincode, new account
   const [entry] = await pool.query("SELECT action FROM audit_log WHERE action LIKE 'area_agent%' ORDER BY id DESC LIMIT 1");
   assert.equal(entry.action, 'area_agent_removed');
 });
+
+test('agents have a home pincode and range; the recruitment plan places agents within range', opts, async () => {
+  assert.equal((await call('/api/admin/users/AG2', { method: 'PATCH', body: { basePincode: '12345' } })).status, 400);
+  assert.equal((await call('/api/admin/users/AG2', { method: 'PATCH', body: { basePincode: '721429', rangeKm: 300 } })).status, 400);
+  assert.equal((await call('/api/admin/users/AG2', { method: 'PATCH', body: { basePincode: '721429', rangeKm: 15 } })).status, 200);
+  const ag2 = (await call('/api/admin/users')).body.users.find((u) => u.code === 'AG2');
+  assert.deepEqual([ag2.basePincode, ag2.rangeKm], ['721429', 15]);
+  assert.equal((await call('/api/admin/users/ADMIN', { method: 'PATCH', body: { basePincode: '721429' } })).status, 200);
+  assert.equal((await call('/api/admin/users')).body.users.find((u) => u.code === 'ADMIN').basePincode, null, 'only field officers have a home pincode');
+
+  // Pincodes within AG2's 15 km: 721429 itself, not Howrah (about 100 km away).
+  const near = (await call('/api/admin/areas/nearby/AG2')).body;
+  assert.equal(near.range, 15);
+  assert.deepEqual(near.pincodes.map((p) => [p.pincode, p.km]), [['721429', 0]]);
+  assert.equal((await call('/api/admin/areas/nearby/AG1')).status, 400, 'no home pincode yet');
+
+  const plan = (await call('/api/admin/areas/plan?branch=VFS&km=20&max=250&min=1&scope=all')).body;
+  assert.equal(plan.summary.accounts, 4);
+  assert.deepEqual(plan.agents.map((a) => a.base.pincode).sort(), ['711302', '721429']);
+  const open = (await call('/api/admin/areas/plan?branch=VFS&min=1')).body;
+  assert.equal(open.summary.accounts, 4, 'no pincode has an agent now, so all are open');
+  const xlsx = await fetch(`${base}/api/admin/areas/plan.xlsx?branch=VFS&min=1`, { headers: { Authorization: `Bearer ${admin}` } });
+  assert.match(xlsx.headers.get('content-type'), /spreadsheetml/);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(Buffer.from(await xlsx.arrayBuffer()));
+  assert.deepEqual(wb.worksheets.map((w) => w.name), ['Agents to recruit', 'Thin areas', 'Pincodes', 'About']);
+  assert.equal(wb.getWorksheet('Agents to recruit').rowCount, 3);
+});

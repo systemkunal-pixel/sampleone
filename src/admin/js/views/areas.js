@@ -1,8 +1,8 @@
 // Areas: accounts grouped by state → district → pincode, and the agent deputed to each pincode.
 // Deputing an agent assigns the pincode's accounts to them; new accounts there go to them on import.
-import { api } from '../api.js';
-import { esc, icon, inr, num, toast, dialog, emptyState, helpButton } from '../ui.js';
-import { t } from '../../../i18n/i18n.js';
+import { api, download } from '../api.js';
+import { esc, icon, inr, inrShort, num, toast, dialog, emptyState, helpButton } from '../ui.js';
+import { t, tr } from '../../../i18n/i18n.js';
 import { route, setQuery } from '../main.js';
 
 let selected = new Set(); // pincodes ticked for a bulk deputation
@@ -43,10 +43,35 @@ function pincodeRows(d) {
 
 const figures = (n) => `<span class="area-fig">${accounts(n.accounts)} · ${inr(n.overdue)}${n.unassigned ? ` · <span class="badge warn">${t('{n} unassigned', { n: num(n.unassigned) })}</span>` : ''}</span>`;
 
+/* i18n: t('Pincodes') t('Agents') t('Recruitment plan') */
+const VIEWS = [['pincodes', 'Pincodes', 'map'], ['agents', 'Agents', 'users'], ['plan', 'Recruitment plan', 'plus']];
+
+function head(data, view) {
+  const link = (v) => {
+    const p = new URLSearchParams({ ...(data.branch ? { branch: data.branch } : {}), ...(v === 'pincodes' ? {} : { view: v }) });
+    return `#/areas${p.toString() ? `?${p}` : ''}`;
+  };
+  return `
+    <div class="page-head">
+      <div><h1>${t('Areas')}</h1><p>${t('Accounts by state, district and pincode. Depute an agent to a pincode: its accounts are assigned to them, and new accounts there go to them when you import.')}</p></div>
+      <div class="page-actions">${helpButton('areas')}</div>
+    </div>
+    ${data.branch ? `<nav class="tabs" aria-label="${esc(t('Areas'))}">${VIEWS.map(([v, label, ic]) =>
+      `<a href="${link(v)}" class="${v === view ? 'active' : ''}" ${v === view ? 'aria-current="page"' : ''}>${icon(ic)} ${t(label)}</a>`).join('')}</nav>` : ''}`;
+}
+
 export async function render(el, q, alive) {
   const branchParam = q.get('branch') || '';
   const [data, { users }] = await Promise.all([api(`areas${branchParam ? `?branch=${encodeURIComponent(branchParam)}` : ''}`), api('users')]);
   if (!alive()) return;
+  const view = VIEWS.some(([v]) => v === q.get('view')) ? q.get('view') : 'pincodes';
+  el.removeEventListener('toggle', onToggle, true);
+  if (data.branch && view === 'plan') return renderPlan(el, q, data, alive);
+  if (data.branch && view === 'agents') return renderAgents(el, data, users);
+  return renderPincodes(el, q, data, users);
+}
+
+function renderPincodes(el, q, data, users) {
   if (data.branch !== lastBranch) {
     selected = new Set();
     lastBranch = data.branch;
@@ -72,10 +97,7 @@ export async function render(el, q, alive) {
   const expandAll = Boolean(find);
 
   el.innerHTML = `
-    <div class="page-head">
-      <div><h1>${t('Areas')}</h1><p>${t('Accounts by state, district and pincode. Depute an agent to a pincode: its accounts are assigned to them, and new accounts there go to them when you import.')}</p></div>
-      <div class="page-actions">${helpButton('areas')}</div>
-    </div>
+    ${head(data, 'pincodes')}
     ${data.branch ? `
     <div class="mini-kpis">
       <div><span>${t('Pincodes')}</span><b>${num(pinCount)}</b></div>
@@ -148,7 +170,6 @@ export async function render(el, q, alive) {
     route();
   }
 
-  el.removeEventListener('toggle', onToggle, true);
   el.addEventListener('toggle', onToggle, true);
 
   const form = el.querySelector('#filters');
@@ -195,6 +216,128 @@ export async function render(el, q, alive) {
       selected = new Set();
       el.querySelectorAll('[data-pin]').forEach((c) => (c.checked = false));
       bulk();
+    }
+  };
+}
+
+// ---------- agents: home pincode, range, and the pincodes within reach ----------
+
+function renderAgents(el, data, users) {
+  const all = data.states.flatMap((s) => s.districts.flatMap((d) => d.pincodes));
+  const deputed = (code) => new Set(all.filter((p) => p.agent?.code === code).map((p) => p.pincode)).size;
+  const agents = users.filter((u) => u.role === 'officer' && u.branch === data.branch);
+  el.innerHTML = `
+    ${head(data, 'agents')}
+    <p class="muted" style="margin-top:0">${t('Give each agent a home pincode and how far they travel (Users → edit). Then pick the pincodes within their reach.')}</p>
+    <section class="card">
+      ${agents.length ? `<div class="table-wrap"><table class="data responsive">
+        <thead><tr><th>${t('Agent')}</th><th>${t('Home pincode')}</th><th class="right">${t('Range')}</th><th class="right">${t('Pincodes deputed')}</th><th class="right">${t('Accounts')}</th><th></th></tr></thead>
+        <tbody>${agents.map((u) => `<tr>
+          <td class="primary"><div class="cell-main">${esc(u.name)}</div><div class="cell-sub">${esc(u.code)}${u.active ? '' : ` · ${t('inactive')}`}</div></td>
+          <td data-label="${esc(t('Home pincode'))}">${u.basePincode ? esc(u.basePincode) : `<a href="#/users?q=${encodeURIComponent(u.code)}" class="badge warn">${t('Not set')}</a>`}</td>
+          <td class="right num" data-label="${esc(t('Range'))}">${t('{n} km', { n: u.rangeKm || 20 })}</td>
+          <td class="right num" data-label="${esc(t('Pincodes deputed'))}">${num(deputed(u.code))}</td>
+          <td class="right num" data-label="${esc(t('Accounts'))}"><a href="#/loans?officer=${encodeURIComponent(u.code)}">${num(u.loans)}</a></td>
+          <td class="actions"><div class="row-actions">${u.active && u.basePincode ? `<button class="btn sm" data-reach="${esc(u.code)}">${icon('map')} ${t('Pincodes in range')}</button>` : ''}</div></td>
+        </tr>`).join('')}</tbody></table></div>`
+        : emptyState(t('No agents in {branch} yet', { branch: data.branch }), t('Add field officers with branch {branch} in Users, with their home pincode.', { branch: data.branch }), 'users')}
+    </section>`;
+
+  el.onclick = async (e) => {
+    const btn = e.target.closest('[data-reach]');
+    if (!btn) return;
+    const u = agents.find((a) => a.code === btn.dataset.reach);
+    let near;
+    try {
+      near = await api(`areas/nearby/${encodeURIComponent(u.code)}`);
+    } catch (ex) {
+      return toast(tr(ex.message), 'bad');
+    }
+    const rows = near.pincodes;
+    const done = await dialog({
+      title: t('{name}: pincodes within {km} km of {pin}', { name: esc(u.name), km: near.range, pin: esc(near.agent.basePincode) }),
+      ok: t('Depute to ticked pincodes'),
+      body: rows.length ? `<div class="form">
+        <p class="muted small" style="margin:0">${t('Straight-line distance from the centre of the home pincode. Pincodes that already have another agent are not ticked.')}</p>
+        <div class="table-wrap" style="max-height:50vh;overflow:auto"><table class="data">
+          <thead><tr><th></th><th>${t('Pincode')}</th><th class="right">${t('Km')}</th><th class="right">${t('Accounts')}</th><th>${t('Agent')}</th></tr></thead>
+          <tbody>${rows.map((p) => `<tr>
+            <td class="check"><input type="checkbox" name="pin" value="${esc(p.pincode)}" ${!p.agent || p.agent === u.code ? 'checked' : ''}></td>
+            <td><b>${esc(p.pincode)}</b><div class="cell-sub">${esc(p.district || '')}</div></td>
+            <td class="right num">${p.km}${p.approx ? '*' : ''}</td>
+            <td class="right num">${num(p.accounts)}</td>
+            <td>${p.agent ? esc(p.agent) : `<span class="muted">—</span>`}</td></tr>`).join('')}</tbody></table></div>
+        <label class="row" style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="onlyUnassigned"> ${t('Only unassigned accounts')}</label>
+      </div>` : `<p>${t('No pincodes with accounts within {km} km.', { km: near.range })}</p>`,
+      onOk: (f, form) => {
+        const pincodes = [...form.querySelectorAll('input[name=pin]:checked')].map((c) => c.value);
+        if (!pincodes.length) throw new Error(t('Tick at least one pincode.'));
+        return api('areas/agent', { method: 'POST', body: { branch: data.branch, pincodes, officerCode: u.code, mode: f.onlyUnassigned ? 'unassigned' : 'all' } });
+      },
+    });
+    if (!done) return;
+    toast(done.changed === 1 ? t('1 account assigned') : t('{n} accounts assigned', { n: num(done.changed) }));
+    route();
+  };
+}
+
+// ---------- recruitment plan ----------
+
+async function renderPlan(el, q, data, alive) {
+  const params = new URLSearchParams({
+    branch: data.branch, km: q.get('km') || '20', max: q.get('max') || '250', min: q.get('min') || '20', scope: q.get('scope') || 'open',
+  });
+  const plan = await api(`areas/plan?${params}`);
+  if (!alive()) return;
+  const s = plan.summary;
+  const row = (a, i) => `<tr>
+    <td class="right num">${a.no ?? i + 1}</td>
+    <td class="primary"><b>${esc(a.base.pincode)}</b>${a.base.approx ? '*' : ''}<div class="cell-sub">${esc(a.base.district || '')}, ${esc(a.base.state || '')}</div></td>
+    <td class="right num" data-label="${esc(t('Accounts'))}">${num(a.accounts)}</td>
+    <td class="right num" data-label="${esc(t('Overdue'))}">${inr(a.overdue)}</td>
+    <td class="right num" data-label="${esc(t('Farthest'))}">${t('{n} km', { n: a.farthestKm })}</td>
+    <td data-label="${esc(t('Covers'))}"><details><summary>${a.pincodes.length === 1 ? t('1 pincode') : t('{n} pincodes', { n: num(a.pincodes.length) })}</summary>
+      <div class="small">${a.pincodes.map((p) => `${esc(p.pincode)} <span class="muted">(${p.km} km, ${num(p.accounts)})</span>`).join(', ')}</div></details></td>
+  </tr>`;
+  const table = (list) => `<div class="table-wrap"><table class="data responsive">
+    <thead><tr><th class="right">#</th><th>${t('Recruit in pincode')}</th><th class="right">${t('Accounts')}</th><th class="right">${t('Overdue')}</th><th class="right">${t('Farthest')}</th><th>${t('Covers')}</th></tr></thead>
+    <tbody>${list.map(row).join('')}</tbody></table></div>`;
+
+  el.innerHTML = `
+    ${head(data, 'plan')}
+    <form class="toolbar" id="plan-form">
+      <label class="field inline"><span>${t('Range (km)')}</span><input class="input" name="km" type="number" min="1" max="200" value="${esc(params.get('km'))}" style="width:90px"></label>
+      <label class="field inline"><span>${t('Most accounts per agent')}</span><input class="input" name="max" type="number" min="10" max="5000" value="${esc(params.get('max'))}" style="width:100px"></label>
+      <label class="field inline"><span>${t('Smallest agent')}</span><input class="input" name="min" type="number" min="0" max="1000" value="${esc(params.get('min'))}" style="width:90px"></label>
+      <select class="select" name="scope" aria-label="${esc(t('Pincodes'))}">
+        <option value="open" ${params.get('scope') === 'open' ? 'selected' : ''}>${t('Pincodes without an agent')}</option>
+        <option value="all" ${params.get('scope') === 'all' ? 'selected' : ''}>${t('All pincodes')}</option>
+      </select>
+      <button class="btn primary" type="submit">${icon('refresh')} ${t('Make plan')}</button>
+      <button class="btn" type="button" data-act="xlsx">${icon('download')} ${t('Download Excel')}</button>
+    </form>
+    <div class="mini-kpis">
+      <div><span>${t('Agents to recruit')}</span><b>${num(s.agents)}</b></div>
+      <div><span>${t('Accounts they cover')}</span><b>${num(s.accounts)}</b></div>
+      <div><span>${t('Overdue they cover')}</span><b>${inrShort(s.overdue)}</b></div>
+      <div><span>${t('Thin areas')}</span><b>${num(s.thinAreas)} · ${t('{n} accounts', { n: num(s.thinAccounts) })}</b></div>
+    </div>
+    <p class="muted small">${t('Each agent lives in the pincode shown and covers pincodes within the range, nearest first, up to the most accounts per agent. The richest areas come first. Distances are straight-line; by road they are usually 20–40% longer. * = pincode located from a neighbouring pincode.')}</p>
+    <section class="card">${plan.agents.length ? table(plan.agents) : emptyState(t('Nothing to plan'), t('Every pincode already has an agent, or no account has a pincode.'), 'map')}</section>
+    ${plan.thin.length ? `<details class="card" style="margin-top:16px"><summary class="area-head"><b>${t('Thin areas')}</b>
+      <span class="area-fig">${t('{n} groups smaller than {min} accounts: cover them by visits from the nearest agent, or by phone.', { n: num(plan.thin.length), min: plan.min })}</span></summary>
+      ${table(plan.thin)}</details>` : ''}
+    ${plan.unlocated.length ? `<div class="warn-box" style="margin-top:16px">${t('Pincodes that could not be located: {list}', { list: plan.unlocated.map((p) => esc(p.pincode)).join(', ') })}</div>` : ''}`;
+
+  const form = el.querySelector('#plan-form');
+  el.onsubmit = (e) => {
+    e.preventDefault();
+    setQuery({ branch: data.branch, view: 'plan', ...Object.fromEntries(new FormData(form)) });
+  };
+  el.onclick = (e) => {
+    if (e.target.closest('[data-act=xlsx]')) {
+      const p = new URLSearchParams({ branch: data.branch, ...Object.fromEntries(new FormData(form)) });
+      download(`areas/plan.xlsx?${p}`, 'recruitment-plan.xlsx').catch((ex) => toast(tr(ex.message), 'bad'));
     }
   };
 }

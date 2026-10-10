@@ -206,6 +206,22 @@ The last five backups are kept in `backups/`. **History** and **Activity** recor
 
 The installers now run `server/supervisor.js` (the updater agent) instead of `server/index.js`. It keeps the web server running and restarts it if it stops. Changes to the agent itself take effect the next time the service restarts (e.g. after re-running the installer). On Windows the installer sets `DB_BIN_DIR` so the agent can find `mariadb-dump`.
 
+## Areas, agents and the recruitment plan
+
+**Admin → Areas** groups accounts that carry a pincode by State → District → Pincode. It has three tabs:
+
+- **Pincodes:** depute an agent (a field officer of the branch) to one or many pincodes. Their accounts are assigned at
+  once, and new accounts in those pincodes go to that agent on every later import.
+- **Agents:** each field officer's home pincode and travel range (set in Users). **Pincodes in range** lists the
+  pincodes with accounts within that distance, nearest first, ready to depute in one step.
+- **Recruitment plan:** where to hire agents so that every pincode is within the range (default 20 km) of one, with at
+  most the number of accounts you set per agent (default 250). Small leftover groups are listed as thin areas. The plan
+  downloads as Excel.
+
+Pincode locations come from `server/data/pincodes.csv`: one centre for each of 19,258 pincodes. The data is the Department
+of Posts' All India Pincode Directory (Open Government Data Platform India, GODL-India), cleaned by
+`scripts/pincodes.js`. Distances are straight-line; by road they are usually 20–40% longer.
+
 ## Email (SMTP2GO)
 
 Set up in the overlord console under **Email**: server `mail.smtp2go.com`, port `2525`, STARTTLS, an SMTP user from

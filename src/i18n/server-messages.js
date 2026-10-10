@@ -62,6 +62,10 @@ export default [
   // server/admin-api.js
   'Choose how often to send the summary email.',
   'Choose the pincodes to depute an agent to.',
+  'Home pincode must be 6 digits.',
+  'Range must be 1–200 km.',
+  'Choose a branch.',
+  'Set the agent’s home pincode first (Users → edit).',
   '{code} is not a field officer.',
   '{code} is deactivated.',
   '{code} belongs to {branch}, not {otherBranch}.',
