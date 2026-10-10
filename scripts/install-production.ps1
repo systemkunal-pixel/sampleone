@@ -37,7 +37,11 @@
 .PARAMETER DbPassword     Database password (asked for, hidden, when not given and not already in .env).
 .PARAMETER OverlordEmail  Sign-in email of the first overlord (required on first install).
 .PARAMETER AcmeEmail      Email Let's Encrypt uses for certificate notices (default: OverlordEmail).
-.PARAMETER NoHttps        Skip Caddy (if HTTPS is handled elsewhere); LoanDesk then listens on -Port only.
+.PARAMETER Web            How HTTPS is served: Auto (default: IIS if it is installed, else Caddy), IIS, Caddy, or None.
+                          IIS: adds a 'LoanDesk' site for the domain that forwards to LoanDesk (URL Rewrite + ARR, installed
+                          from Microsoft if missing) and gets the certificate with win-acme, which renews it.
+.PARAMETER WacsPath       Path to wacs.exe if win-acme is not found automatically.
+.PARAMETER NoHttps        Same as -Web None: LoanDesk listens on -Port only (HTTPS handled elsewhere).
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '', Justification = 'The password goes into .env as text; it is normally entered via a hidden prompt.')]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Installer script, not a module.')]
@@ -53,6 +57,8 @@ param(
   [string]$DbPassword,
   [string]$OverlordEmail,
   [string]$AcmeEmail,
+  [ValidateSet('Auto', 'IIS', 'Caddy', 'None')][string]$Web = 'Auto',
+  [string]$WacsPath,
   [switch]$NoHttps
 )
 
@@ -122,7 +128,10 @@ $isAdmin = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.W
 if (-not $isAdmin) { Fail 'Run PowerShell as Administrator, then run this script again.' }
 if (-not (Test-Path (Join-Path $SrcDir 'server\supervisor.js'))) { Fail "Run this script from the LoanDesk project folder (server\supervisor.js not found in $SrcDir)." }
 if ($DbName -notmatch '^[A-Za-z0-9_]+$') { Fail '-DbName may only contain letters, digits and _' }
-if (-not $NoHttps -and $Domain -notmatch '^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$') { Fail "-Domain '$Domain' is not a valid host name." }
+if ($NoHttps) { $Web = 'None' }
+if ($Web -eq 'Auto') { $Web = if (Get-Service W3SVC -ErrorAction SilentlyContinue) { 'IIS' } else { 'Caddy' } }
+Write-Host "HTTPS will be served by: $Web"
+if ($Web -ne 'None' -and $Domain -notmatch '^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$') { Fail "-Domain '$Domain' is not a valid host name." }
 
 # Settings from an earlier install are kept unless given again.
 $firstInstall = -not (Test-Path $EnvFile)
@@ -160,6 +169,13 @@ $Node = (Get-Command node.exe).Source
 $Npm = Join-Path (Split-Path $Node) 'npm.cmd'
 Write-Host "Node.js $(& $Node -v) at $Node"
 
+# Local port for LoanDesk: keep the earlier one; on a first install pick a free one if 8080 is taken (IIS often uses it).
+if ($firstInstall -and -not $PSBoundParameters.ContainsKey('Port') -and -not (Test-PortFree $Port '127.0.0.1')) {
+  $Port = (8080..8099) + (9080..9099) | Where-Object { Test-PortFree $_ '127.0.0.1' } | Select-Object -First 1
+  if (-not $Port) { Fail 'No free local port between 8080 and 9099. Re-run with -Port <a free port>.' }
+  Note "Port 8080 is in use on this server; LoanDesk will use $Port (only reachable from this server)."
+}
+
 # ------------------------------------------------------------------ app files
 Step "Copying LoanDesk to $AppDir"
 Stop-LoanDesk
@@ -184,7 +200,7 @@ Write-TextFile $EnvFile @"
 # Written by scripts/install-production.ps1 on $(Get-Date -Format 'yyyy-MM-dd HH:mm'). Keep this file private.
 APP_ENV=Production
 PORT=$Port
-HOST=$(if ($NoHttps) { '0.0.0.0' } else { '127.0.0.1' })
+HOST=$(if ($Web -eq 'None') { '0.0.0.0' } else { '127.0.0.1' })
 TZ=Asia/Kolkata
 SESSION_DAYS=30
 
@@ -259,7 +275,7 @@ if (-not $ok) {
 Write-Host "LoanDesk $($h.version) is running on 127.0.0.1:$Port"
 
 # ------------------------------------------------------------------ HTTPS with Caddy
-if (-not $NoHttps) {
+if ($Web -eq 'Caddy') {
   Step "Setting up HTTPS for $Domain (Caddy $CaddyVersion)"
   $caddyDir = Join-Path $AppDir 'caddy'
   $caddyExe = Join-Path $caddyDir 'caddy.exe'
@@ -280,7 +296,7 @@ if (-not $NoHttps) {
       $owner = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 |
         ForEach-Object { (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName }
       Fail ("Port $p is already used by '$owner'. HTTPS needs ports 80 and 443. If IIS or another web server uses them, either stop it, " +
-        'or re-run with -NoHttps and point that web server to http://127.0.0.1:' + $Port + '.')
+        'or re-run with -Web IIS (for IIS) or -Web None and point that web server to http://127.0.0.1:' + $Port + '.')
     }
   }
   if (-not $AcmeEmail) { $AcmeEmail = $OverlordEmail }
@@ -328,9 +344,138 @@ $Domain {
   else { Note "https://$Domain did not answer yet. Check DNS and that ports 80/443 are open, then look at $caddyLog. Caddy keeps retrying." }
 }
 
+# ------------------------------------------------------------------ HTTPS with IIS
+if ($Web -eq 'IIS') {
+  Step "Setting up IIS for $Domain"
+  Import-Module WebAdministration
+  $inetsrv = Join-Path $env:SystemRoot 'System32\inetsrv'
+
+  # URL Rewrite and Application Request Routing (ARR), from Microsoft, only if missing.
+  function Install-IisModule([string]$Name, [string]$Url) {
+    $msi = Join-Path $env:TEMP (Split-Path $Url -Leaf)
+    Write-Host "Installing $Name from Microsoft..."
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest $Url -OutFile $msi -UseBasicParsing
+    $sig = Get-AuthenticodeSignature $msi
+    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+      Remove-Item $msi -Force
+      Fail "The downloaded $Name installer is not signed by Microsoft. Install $Name yourself from https://www.iis.net/downloads, then re-run."
+    }
+    $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait -PassThru
+    Remove-Item $msi -Force
+    if ($p.ExitCode -notin 0, 3010) { Fail "Installing $Name failed (msiexec code $($p.ExitCode))." }
+  }
+  if (-not (Test-Path (Join-Path $inetsrv 'rewrite.dll'))) {
+    Install-IisModule 'IIS URL Rewrite 2.1' 'https://download.microsoft.com/download/1/2/8/128E2E22-C1B9-44A4-BE2A-5859ED1D4592/rewrite_amd64_en-US.msi'
+  }
+  $arrInstalled = $true
+  try { Get-WebConfiguration -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter 'system.webServer/proxy' -ErrorAction Stop | Out-Null } catch { $arrInstalled = $false }
+  if (-not $arrInstalled) {
+    Install-IisModule 'IIS Application Request Routing 3.0' 'https://download.microsoft.com/download/E/9/8/E9849D6A-020E-47E4-9FD0-A023E99B54EB/requestRouter_amd64.msi'
+  }
+  # Let IIS forward requests. This only affects sites whose rules forward to another address, like LoanDesk's.
+  Set-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter 'system.webServer/proxy' -Name 'enabled' -Value 'True'
+  Set-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter 'system.webServer/proxy' -Name 'preserveHostHeader' -Value 'True'
+  Set-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter 'system.webServer/proxy' -Name 'timeout' -Value '00:02:00'
+
+  # The site: an empty folder whose web.config redirects HTTP to HTTPS and forwards everything to LoanDesk.
+  $siteDir = Join-Path $AppDir 'iis'
+  New-Item -ItemType Directory -Force -Path $siteDir | Out-Null
+  Write-TextFile (Join-Path $siteDir 'web.config') @"
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Written by scripts/install-production.ps1: IIS in front of LoanDesk on 127.0.0.1:$Port. -->
+<configuration>
+  <system.webServer>
+    <rewrite>
+      <rules>
+        <rule name="LoanDesk: HTTP to HTTPS" stopProcessing="true">
+          <match url="(.*)" />
+          <conditions>
+            <add input="{HTTPS}" pattern="off" />
+            <add input="{REQUEST_URI}" pattern="^/\.well-known/acme-challenge/" negate="true" />
+          </conditions>
+          <action type="Redirect" url="https://{HTTP_HOST}/{R:1}" redirectType="Permanent" />
+        </rule>
+        <rule name="LoanDesk: forward" stopProcessing="true">
+          <match url="(.*)" />
+          <conditions>
+            <add input="{REQUEST_URI}" pattern="^/\.well-known/acme-challenge/" negate="true" />
+          </conditions>
+          <action type="Rewrite" url="http://127.0.0.1:$Port/{R:1}" />
+        </rule>
+      </rules>
+    </rewrite>
+    <security>
+      <requestFiltering>
+        <requestLimits maxAllowedContentLength="52428800" />
+      </requestFiltering>
+    </security>
+    <httpProtocol>
+      <customHeaders>
+        <add name="Strict-Transport-Security" value="max-age=31536000; includeSubDomains" />
+      </customHeaders>
+    </httpProtocol>
+  </system.webServer>
+</configuration>
+"@
+  $pool = 'LoanDesk'
+  if (-not (Test-Path "IIS:\AppPools\$pool")) {
+    New-WebAppPool -Name $pool | Out-Null
+    Set-ItemProperty "IIS:\AppPools\$pool" -Name managedRuntimeVersion -Value ''
+  }
+  $site = Get-Website | Where-Object { $_.Name -eq 'LoanDesk' }
+  $taken = Get-WebBinding | Where-Object { $_.bindingInformation -match ":$([regex]::Escape($Domain))$" -and $_.ItemXPath -notmatch "@name='LoanDesk'" }
+  if ($taken) { Fail "Another IIS site already has a binding for $Domain. Remove it in IIS Manager, then re-run." }
+  if (-not $site) {
+    $site = New-Website -Name 'LoanDesk' -PhysicalPath $siteDir -ApplicationPool $pool -HostHeader $Domain -Port 80 -IPAddress '*'
+  } else {
+    Set-ItemProperty 'IIS:\Sites\LoanDesk' -Name physicalPath -Value $siteDir
+    Set-ItemProperty 'IIS:\Sites\LoanDesk' -Name applicationPool -Value $pool
+    if (-not (Get-WebBinding -Name 'LoanDesk' -Protocol http -HostHeader $Domain)) { New-WebBinding -Name 'LoanDesk' -Protocol http -Port 80 -HostHeader $Domain }
+  }
+  Start-Website -Name 'LoanDesk' -ErrorAction SilentlyContinue
+  try {
+    $r = Invoke-WebRequest "http://127.0.0.1/api/health" -Headers @{ Host = $Domain } -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 10 -ErrorAction Stop
+    Write-Host "IIS forwards to LoanDesk (HTTP $($r.StatusCode))."
+  } catch {
+    if ($_.Exception.Response.StatusCode.value__ -in 301, 302) { Write-Host 'IIS answers for the domain and redirects HTTP to HTTPS.' }
+    else { Note "IIS did not forward the test request: $($_.Exception.Message)" }
+  }
+
+  # Certificate with win-acme: an existing installation (found through its renewal task) or -WacsPath.
+  if (-not $WacsPath) {
+    $WacsPath = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like 'win-acme*' } |
+      ForEach-Object { $_.Actions.Execute } | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+  }
+  if (-not $WacsPath) {
+    $WacsPath = @('C:\Program Files\win-acme\wacs.exe', 'C:\win-acme\wacs.exe', 'C:\tools\win-acme\wacs.exe') | Where-Object { Test-Path $_ } | Select-Object -First 1
+  }
+  $hasHttps = Get-WebBinding -Name 'LoanDesk' -Protocol https -HostHeader $Domain
+  if ($hasHttps) {
+    Write-Host "IIS already has an HTTPS binding for $Domain; win-acme keeps renewing it."
+  } elseif (-not $WacsPath) {
+    Note ("win-acme (wacs.exe) was not found. Re-run with -WacsPath 'C:\path\to\wacs.exe', or open win-acme, choose " +
+      "'Create certificate (default settings)' and pick the site 'LoanDesk' ($Domain).")
+  } else {
+    if (-not $AcmeEmail) { $AcmeEmail = $OverlordEmail }
+    $wacsArgs = @('--source', 'iis', '--siteid', "$($site.Id)", '--host', $Domain, '--installation', 'iis', '--accepttos')
+    if ($AcmeEmail) { $wacsArgs += @('--emailaddress', $AcmeEmail) }
+    Write-Host "Requesting the certificate with $WacsPath ..."
+    & $WacsPath @wacsArgs
+    if ($LASTEXITCODE -ne 0 -or -not (Get-WebBinding -Name 'LoanDesk' -Protocol https -HostHeader $Domain)) {
+      Note ("win-acme did not finish (see its output above). Open win-acme, choose 'Create certificate (default settings)' " +
+        "and pick the site 'LoanDesk' ($Domain); it then renews it with your other certificates.")
+    }
+  }
+  try {
+    $h2 = Invoke-RestMethod "https://$Domain/api/health" -TimeoutSec 10
+    if ($h2.ok) { Write-Host "https://$Domain is live." -ForegroundColor Green }
+  } catch { Note "https://$Domain did not answer yet ($($_.Exception.Message)). Check DNS and the HTTPS binding of the LoanDesk site in IIS." }
+}
+
 # ------------------------------------------------------------------ summary
 Step 'Done - LoanDesk is installed'
-$base = if ($NoHttps) { "http://<this server>:$Port" } else { "https://$Domain" }
+$base = if ($Web -eq 'None') { "http://<this server>:$Port" } else { "https://$Domain" }
 Write-Host ''
 Write-Host "  Home page     : $base/"
 Write-Host "  Field app     : $base/app/"
