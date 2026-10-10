@@ -135,7 +135,6 @@ function viewLogin() {
         t('1 record on this phone still needs to reach the server. It will be sent as soon as you log in.'),
         t('{n} records on this phone still need to reach the server. They’ll be sent as soon as you log in.'))}</p>` : ''}
       <form id="login-form" class="card form">
-        <label>${t('Company code')}<input name="company" maxlength="12" autocapitalize="characters" autocomplete="organization" value="${esc(session?.user?.company?.code || store.rememberedCompany())}" placeholder="${esc(t('e.g. BRMC'))}"></label>
         <label>${t('Officer / supervisor code')}<input name="code" required maxlength="12" autocapitalize="characters" autocomplete="username" value="${esc(session?.user?.code || '')}"></label>
         <label>${t('PIN')}<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" required minlength="4" maxlength="8" autocomplete="current-password"></label>
         <p class="error" id="login-error" role="alert"></p>
@@ -684,7 +683,7 @@ document.addEventListener('submit', async (e) => {
     btn.disabled = true;
     btn.textContent = t('Logging in…');
     try {
-      await store.login(data.company, data.code, data.pin);
+      await store.login(data.code, data.pin);
       location.hash = '#/';
       install.protectStorage().catch(() => {});
     } catch (err) {

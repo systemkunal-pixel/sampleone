@@ -21,6 +21,48 @@ export async function migrate(pool) {
     .map((s) => s.trim())
     .filter(Boolean);
   for (const s of statements) await pool.query(s);
+  await makeUserCodesUnique(pool);
+}
+
+/**
+ * User codes are unique across all companies (people sign in with code + PIN only). Codes that
+ * were duplicated before this rule keep their oldest owner; the others get the first letters of
+ * their company code in front ("FO27" in DATAHAAT becomes "DATFO27"), everywhere they are used.
+ */
+async function makeUserCodesUnique(pool) {
+  const dups = await pool.query(
+    `SELECT u.id, u.code, u.company_id, c.code AS company_code FROM users u JOIN companies c ON c.id = u.company_id
+     WHERE u.code IN (SELECT code FROM users GROUP BY code HAVING COUNT(*) > 1) ORDER BY u.code, u.company_id, u.id`);
+  const seen = new Set();
+  for (const u of dups) {
+    if (!seen.has(u.code)) {
+      seen.add(u.code);
+      continue;
+    }
+    let next = null;
+    for (const len of [3, 4, 2, 5, 6, 1]) {
+      const candidate = `${u.company_code.slice(0, len)}${u.code}`.slice(0, 12);
+      const [taken] = await pool.query('SELECT id FROM users WHERE code = ?', [candidate]);
+      if (!taken) {
+        next = candidate;
+        break;
+      }
+    }
+    if (!next) throw new Error(`Cannot find a free code for ${u.code} in ${u.company_code}; rename it by hand.`);
+    await withTx(pool, async (conn) => {
+      await conn.query('UPDATE users SET code = ? WHERE id = ?', [next, u.id]);
+      await conn.query('UPDATE loans SET officer_code = ? WHERE company_id = ? AND officer_code = ?', [next, u.company_id, u.code]);
+      await conn.query('UPDATE payments SET officer_code = ? WHERE company_id = ? AND officer_code = ?', [next, u.company_id, u.code]);
+      await conn.query('UPDATE payments SET verified_by = ? WHERE company_id = ? AND verified_by = ?', [next, u.company_id, u.code]);
+      await conn.query(
+        'UPDATE visits v JOIN loans l ON l.id = v.loan_id SET v.officer_code = ? WHERE l.company_id = ? AND v.officer_code = ?',
+        [next, u.company_id, u.code]);
+      await audit(conn, { code: 'SYSTEM', companyId: u.company_id }, 'user_code_changed', next,
+        { from: u.code, reason: 'User codes must be unique across LoanDesk' });
+    });
+    console.warn(`User code ${u.code} in ${u.company_code} was also used in another company; it is now ${next}.`);
+  }
+  await pool.query('ALTER TABLE users ADD UNIQUE KEY IF NOT EXISTS uq_users_code (code)');
 }
 
 /** Runs fn(conn) inside a transaction. */

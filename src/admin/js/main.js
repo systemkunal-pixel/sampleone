@@ -22,15 +22,6 @@ const PAGES = [
   { path: 'help', label: 'Help & guides', icon: 'help', view: help },
 ];
 
-const COMPANY_KEY = 'loandesk:company';
-const rememberedCompany = () => {
-  try {
-    return localStorage.getItem(COMPANY_KEY) || '';
-  } catch {
-    return '';
-  }
-};
-
 // Plan features and company for the signed-in admin, from /api/me. Elements with data-needs="feature"
 // are hidden by CSS when the company's plan doesn't include it.
 let context = null;
@@ -75,12 +66,8 @@ function renderLogin(message = '') {
             ${langSelect('login-lang', esc(t('Language')))}
           </div>
           ${message ? `<div class="info-box">${esc(message)}</div>` : ''}
-          <label class="field"><span>${t('Company code')}</span>
-            <input class="input" name="company" autocomplete="organization" autocapitalize="characters" maxlength="12" value="${esc(rememberedCompany())}" ${rememberedCompany() ? '' : 'autofocus'}>
-            <span class="hint">${t('Given to you by LoanDesk, e.g. BRMC.')}</span>
-          </label>
           <label class="field"><span>${t('Admin code')}</span>
-            <input class="input" name="code" required autocomplete="username" autocapitalize="characters" ${rememberedCompany() ? 'autofocus' : ''}>
+            <input class="input" name="code" required autocomplete="username" autocapitalize="characters" autofocus>
           </label>
           <label class="field"><span>${t('Password')}</span>
             <div class="input-group">
@@ -111,11 +98,7 @@ function renderLogin(message = '') {
     btn.disabled = true;
     btn.textContent = t('Signing in…');
     try {
-      const company = form.company.value.trim().toUpperCase();
-      await login(company, form.code.value.trim(), form.pin.value);
-      try {
-        localStorage.setItem(COMPANY_KEY, company);
-      } catch {}
+      await login(form.code.value.trim(), form.pin.value);
       if (!location.hash || location.hash === '#/login') location.hash = '#/dashboard';
       route();
     } catch (ex) {

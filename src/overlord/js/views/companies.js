@@ -105,7 +105,7 @@ function openCreate() {
       <div class="form-row">
         <label class="field"><span>Company code <span class="req">*</span></span>
           <input class="input" name="code" required maxlength="12" autocapitalize="characters" placeholder="e.g. SANJIVANI">
-          <span class="hint">2–12 letters/digits. Staff type it when signing in. Can't be changed later.</span></label>
+          <span class="hint">2–12 letters/digits: the company's short name inside LoanDesk. Can't be changed later.</span></label>
         <label class="field"><span>Plan</span><select class="select" name="plan">${planOptions('regular')}</select></label>
       </div>
       ${contactFields()}
@@ -149,7 +149,7 @@ function openCreate() {
         ok: 'Done',
         body: `<p>Send these sign-in details to the company privately:</p>
           <dl class="dl keep"><dt>Admin console</dt><dd>${esc(new URL('../admin/', location.href).href)}</dd>
-          <dt>Company code</dt><dd><b>${esc(f.code.toUpperCase())}</b></dd><dt>Admin code</dt><dd><b>${esc(f.adminCode.toUpperCase())}</b></dd>
+          <dt>Admin code</dt><dd><b>${esc(f.adminCode.toUpperCase())}</b></dd>
           <dt>Password</dt><dd><code>${esc(f.adminPassword)}</code></dd></dl>`,
       });
       location.hash = `#/companies/${id}`;
@@ -278,7 +278,7 @@ async function renderDetail(el, id) {
         <div class="card">
           <div class="card-head"><h2>Details</h2></div>
           <div class="card-body"><dl class="dl">
-            <dt>Company code</dt><dd><b>${esc(c.code)}</b> <span class="muted small">staff type this when signing in</span></dd>
+            <dt>Company code</dt><dd><b>${esc(c.code)}</b> <span class="muted small">short name inside LoanDesk</span></dd>
             <dt>Plan</dt><dd>${planBadge(c.plan)}</dd>
             <dt>Officer limit</dt><dd>${ent.maxOfficers == null ? 'Unlimited' : num(ent.maxOfficers)}${c.maxOfficers != null ? ' <span class="muted small">(company override)</span>' : ''}</dd>
             <dt>Contact</dt><dd>${esc(c.contact.name || '—')}${c.contact.phone ? `<br>${esc(c.contact.phone)}` : ''}${c.contact.email ? `<br><a href="mailto:${esc(c.contact.email)}">${esc(c.contact.email)}</a>` : ''}</dd>

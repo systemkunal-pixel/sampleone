@@ -192,7 +192,8 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     if (branch.length < 2 || branch.length > 100) throw new HttpError(400, 'Enter the branch.');
     if (!ROLES.includes(role)) throw new HttpError(400, 'Choose a role.');
     if (!validPin(b.pin, role)) throw new HttpError(400, pinRule(role));
-    const [dup] = await pool.query('SELECT code FROM users WHERE company_id = ? AND code = ?', [user.companyId, code]);
+    // Codes are unique across all companies on LoanDesk: people sign in with code + PIN only.
+    const [dup] = await pool.query('SELECT code FROM users WHERE code = ?', [code]);
     if (dup) throw new HttpError(409, `Code ${code} is already taken.`);
     if (role === 'officer') await assertOfficerSeat(pool, user.companyId);
     await pool.query('INSERT INTO users (company_id, code, name, role, branch, pin_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',

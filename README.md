@@ -14,7 +14,7 @@ LoanDesk is **multi-company**: each lending company is a separate workspace with
 | **Overlord console**: platform console | The LoanDesk operator | `https://loandesk.datahaat.com/overlord/` |
 | **Server**: Node.js API with a **MariaDB** database | | Serves all of the above |
 
-Staff sign in with their **company code** (for example `BRMC`), their user code and PIN or password. The company code may be left blank when the user code and PIN match only one person. Existing data belongs to company 1, **BRMC** (Bihar Risk Management Consultancy Private Limited). Company 2, **DATAHAAT**, is an in-house company for testing.
+Staff sign in with just their **user code** and PIN (or password). User codes are unique across all of LoanDesk, so nobody types a company code. Codes that were duplicated in two companies before this rule were renamed once at start-up: the oldest user kept the code, and the others got their company's first letters in front (for example `DATFO27`). Existing data belongs to company 1, **BRMC** (Bihar Risk Management Consultancy Private Limited). Company 2, **DATAHAAT**, is an in-house company for testing.
 
 No build step is needed. The app is plain HTML, CSS and JavaScript, and the server's only runtime dependencies are `mariadb`, `exceljs` and `qrcode-svg`.
 
@@ -27,7 +27,7 @@ git clone -b claude/eager-ride-t1oaiq https://github.com/systemkunal-pixel/sampl
 sudo bash ~/sampleone/scripts/install.sh --demo        # --demo adds sample data; leave it out for production
 ```
 
-At the end it prints the new passwords: the BRMC admin, the overlord, and with `--demo` the DataHaat demo admin. They are also saved in `/root/loan-recovery-credentials.txt` (readable by root only). Open `http://localhost:8080/admin/` and sign in with company code **BRMC**, code **ADMIN**. Add `--overlord-email you@example.com` to choose the overlord's sign-in email (default `owner@loandesk.local`).
+At the end it prints the new passwords: the BRMC admin, the overlord, and with `--demo` the DataHaat demo admin. They are also saved in `/root/loan-recovery-credentials.txt` (readable by root only). Open `http://localhost:8080/admin/` and sign in with code **ADMIN**. Add `--overlord-email you@example.com` to choose the overlord's sign-in email (default `owner@loandesk.local`).
 
 - **HTTPS on a public server:** point your domain's DNS at the machine, open ports 80 and 443, then run `sudo bash ~/sampleone/scripts/install.sh --domain loandesk.datahaat.com`. Caddy obtains the certificate.
 - **Updating:** `git -C ~/sampleone pull && sudo bash ~/sampleone/scripts/install.sh`. The database, data and passwords are kept.
@@ -219,7 +219,7 @@ npm run admin -- add-overlord --email you@example.com --name "Your Name" --passw
 npm start                       # http://localhost:8080   ·   /admin/   ·   /overlord/
 ```
 
-Sign in to `/admin/` with company code `BRMC`, create officers and supervisors, then import your loans. To try everything with sample data, run `npm run admin -- seed-demo --company DATAHAAT`, or use **Load demo data** on an empty company in the overlord console. This fills the company with FO27 / FO31 (PIN 1234), SUP1 (PIN 9999) and ADMIN (password `Demo@Admin2026`); it only runs on a company with no users or loans.
+Sign in to `/admin/` as `ADMIN`, create officers and supervisors, then import your loans. To try everything with sample data, run `npm run admin -- seed-demo --company DATAHAAT`, or use **Load demo data** on an empty company in the overlord console. This fills the company with two officers (PIN 1234), a supervisor (PIN 9999) and an admin (password `Demo@Admin2026`, or `--password`). They are called FO27 / FO31 / SUP1 / ADMIN when those codes are free, and otherwise get the company's first letters in front (e.g. DATFO27). The command prints the codes. It only runs on a company with no users or loans.
 
 Command-line equivalents: `npm run admin -- add-user | set-pin | deactivate | list-users | import-loans <file> | seed-demo | migrate`. The user and import commands take `--company CODE`.
 

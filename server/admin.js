@@ -16,12 +16,14 @@ const USAGE = `Usage: npm run admin -- <command> [options]
   list-companies
   add-user --company BRMC --code FO27 --name "Priya Mishra" --role officer|supervisor|admin --branch "Lucknow Rural" --pin 1234
                                             (admins: --pin is a password of 10+ chars with letters and digits)
-  set-pin --company BRMC --code FO27 --pin 4321   reset a PIN/password (logs the user out everywhere)
-  deactivate --company BRMC --code FO27     block a user and end their sessions
+  set-pin --code FO27 --pin 4321            reset a PIN/password (logs the user out everywhere)
+  deactivate --code FO27                    block a user and end their sessions
+                                            (user codes are unique across all companies)
   list-users [--company BRMC]
   import-loans --company BRMC <file.xlsx|.csv|.json>   validate and upsert loans (same rules as the admin console)
-  seed-demo --company DATAHAAT              demo branch in an empty company: officers FO27/FO31 (PIN 1234),
-                                            supervisor SUP1 (PIN 9999), admin ADMIN (password Demo@Admin2026)
+  seed-demo --company DATAHAAT [--password P]   demo branch in an empty company: two officers (PIN 1234), a
+                                            supervisor (PIN 9999) and an admin (password P, default Demo@Admin2026);
+                                            prints their codes
 
   add-overlord --email you@example.com --name "Your Name" --password "…"
                                             platform operator for the /overlord/ console (12+ chars, letters
@@ -48,33 +50,47 @@ async function companyId(conn, code) {
   return c.id;
 }
 
+/** True when a user code is already used in any company (codes are unique across LoanDesk). */
+export async function codeTaken(conn, code) {
+  const [u] = await conn.query('SELECT id FROM users WHERE code = ?', [String(code).toUpperCase()]);
+  return Boolean(u);
+}
+
 export async function addUser(conn, { companyId, code, name, role, branch, pin }) {
   if (!['officer', 'supervisor', 'admin'].includes(role)) throw new Error('--role must be officer, supervisor or admin');
   if (!validPin(pin, role)) throw new Error(pinRule(role));
   if (code.toUpperCase() === SUPPORT_CODE) throw new Error(`${SUPPORT_CODE} is reserved for LoanDesk support.`);
+  if (await codeTaken(conn, code)) throw new Error(`User code ${code.toUpperCase()} is already used. Every user needs a code of their own.`);
   await conn.query('INSERT INTO users (company_id, code, name, role, branch, pin_hash) VALUES (?, ?, ?, ?, ?, ?)', [
     companyId, code.toUpperCase(), name, role, branch, await hashPin(pin),
   ]);
 }
 
-export const DEMO_LOGINS = 'officers FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999), admin ADMIN (password Demo@Admin2026)';
+export const demoLogins = (c, adminPassword = 'Demo@Admin2026') =>
+  `officers ${c.FO27} / ${c.FO31} (PIN 1234), supervisor ${c.SUP1} (PIN 9999), admin ${c.ADMIN} (password ${adminPassword})`;
 
 /** Demo branch with two officers sharing the generated portfolio and one supervisor, in an empty company. */
-export async function seedDemo(pool, companyId = 1) {
+export async function seedDemo(pool, companyId = 1, { adminPassword = 'Demo@Admin2026' } = {}) {
   const branch = 'Lucknow Rural';
   const [{ n }] = await pool.query('SELECT (SELECT COUNT(*) FROM users WHERE company_id = ?) + (SELECT COUNT(*) FROM loans WHERE company_id = ?) AS n', [companyId, companyId]);
   if (n > 0) throw new Error('This company already has users or loans; demo data only goes into an empty company.');
   // Ids are global across companies, so the demo's get the company prefix.
   const id = (s) => `${companyId}-${s}`;
+  // User codes are global too: the plain demo codes if free, else with the company's first letters.
+  const [{ code: companyCode }] = await pool.query('SELECT code FROM companies WHERE id = ?', [companyId]);
+  const base = ['FO27', 'FO31', 'SUP1', 'ADMIN'];
+  let free = true;
+  for (const b of base) if (await codeTaken(pool, b)) free = false;
+  const codes = Object.fromEntries(base.map((b) => [b, free ? b : `${companyCode.slice(0, 3)}${b}`.slice(0, 12)]));
   await withTx(pool, async (conn) => {
-    await addUser(conn, { companyId, code: 'FO27', name: 'Priya Mishra', role: 'officer', branch, pin: '1234' });
-    await addUser(conn, { companyId, code: 'FO31', name: 'Ravi Tiwari', role: 'officer', branch, pin: '1234' });
-    await addUser(conn, { companyId, code: 'SUP1', name: 'Neha Saxena', role: 'supervisor', branch, pin: '9999' });
-    await addUser(conn, { companyId, code: 'ADMIN', name: 'Head Office Admin', role: 'admin', branch: 'Head Office', pin: 'Demo@Admin2026' });
+    await addUser(conn, { companyId, code: codes.FO27, name: 'Priya Mishra', role: 'officer', branch, pin: '1234' });
+    await addUser(conn, { companyId, code: codes.FO31, name: 'Ravi Tiwari', role: 'officer', branch, pin: '1234' });
+    await addUser(conn, { companyId, code: codes.SUP1, name: 'Neha Saxena', role: 'supervisor', branch, pin: '9999' });
+    await addUser(conn, { companyId, code: codes.ADMIN, name: 'Head Office Admin', role: 'admin', branch: 'Head Office', pin: adminPassword });
     const loans = seedLoans();
     for (const [i, loan] of loans.entries()) {
       const loanId = id(loan.id);
-      await upsertLoan(conn, companyId, { ...loan, id: loanId, branch, officerCode: i % 4 === 3 ? 'FO31' : 'FO27' });
+      await upsertLoan(conn, companyId, { ...loan, id: loanId, branch, officerCode: i % 4 === 3 ? codes.FO31 : codes.FO27 });
       for (const p of loan.payments) {
         await conn.query(
           `INSERT INTO payments (company_id, id, loan_id, recorded_at, amount, mode, reference, receipt_no, officer_code, received_at)
@@ -91,6 +107,7 @@ export async function seedDemo(pool, companyId = 1) {
       if (ptp) await conn.query('UPDATE loans SET follow_up_date = ? WHERE id = ?', [ptp.ptpDate, loanId]);
     }
   });
+  return codes;
 }
 
 /** Creates a platform operator. The authenticator app is enrolled at their first sign-in. */
@@ -131,11 +148,10 @@ async function main() {
         console.log(`Added ${values.role} ${values.code.toUpperCase()} to ${values.company.toUpperCase()}.`);
         break;
       case 'set-pin': {
-        need('company', 'code', 'pin');
-        const cid = await companyId(pool, values.company);
+        need('code', 'pin');
         const code = values.code.toUpperCase();
-        const [u] = await pool.query('SELECT id, role FROM users WHERE company_id = ? AND code = ?', [cid, code]);
-        if (!u) throw new Error(`No user ${code} in ${values.company.toUpperCase()}`);
+        const [u] = await pool.query('SELECT id, role FROM users WHERE code = ?', [code]);
+        if (!u) throw new Error(`No user ${code}`);
         if (!validPin(values.pin, u.role)) throw new Error(pinRule(u.role));
         await pool.query('UPDATE users SET pin_hash = ? WHERE id = ?', [await hashPin(values.pin), u.id]);
         await pool.query('DELETE FROM sessions WHERE user_id = ?', [u.id]);
@@ -143,11 +159,10 @@ async function main() {
         break;
       }
       case 'deactivate': {
-        need('company', 'code');
-        const cid = await companyId(pool, values.company);
+        need('code');
         const code = values.code.toUpperCase();
-        const [u] = await pool.query('SELECT id FROM users WHERE company_id = ? AND code = ?', [cid, code]);
-        if (!u) throw new Error(`No user ${code} in ${values.company.toUpperCase()}`);
+        const [u] = await pool.query('SELECT id FROM users WHERE code = ?', [code]);
+        if (!u) throw new Error(`No user ${code}`);
         await pool.query('UPDATE users SET active = 0 WHERE id = ?', [u.id]);
         await pool.query('DELETE FROM sessions WHERE user_id = ?', [u.id]);
         console.log(`${code} deactivated.`);
@@ -180,11 +195,14 @@ async function main() {
         console.log(`Imported ${rows.length} loans (${result.created} new, ${result.updated} updated) at ${localTimestamp()}.`);
         break;
       }
-      case 'seed-demo':
+      case 'seed-demo': {
         need('company');
-        await seedDemo(pool, await companyId(pool, values.company));
-        console.log(`Demo data loaded into ${values.company.toUpperCase()}: ${DEMO_LOGINS}.`);
+        const adminPassword = values.password || 'Demo@Admin2026';
+        if (!validPin(adminPassword, 'admin')) throw new Error(pinRule('admin'));
+        const codes = await seedDemo(pool, await companyId(pool, values.company), { adminPassword });
+        console.log(`Demo data loaded into ${values.company.toUpperCase()}: ${demoLogins(codes, adminPassword)}.`);
         break;
+      }
       case 'add-overlord':
         need('email', 'name', 'password');
         await addOverlord(pool, values);

@@ -114,21 +114,22 @@ test('overlord creates a company with its first admin; data stays inside each co
   acme = res.body.id;
   assert.equal((await O('/companies', { method: 'POST', body: { code: 'ACME', name: 'Again', admin: { code: 'X1', name: 'Xx', password: 'AcmeAdmin2026' } } })).status, 409);
 
-  // Same demo codes and PINs in two companies: the company code becomes necessary.
+  // User codes are unique across companies: ACME's demo users get ACME's first letters.
   assert.equal((await O(`/companies/${acme}/demo`, { method: 'POST' })).status, 409, 'not empty: it has an admin');
   await pool.query('DELETE FROM users WHERE company_id = ?', [acme]);
-  assert.equal((await O(`/companies/${acme}/demo`, { method: 'POST' })).status, 200);
+  const demo = await O(`/companies/${acme}/demo`, { method: 'POST' });
+  assert.equal(demo.status, 200);
+  assert.match(demo.body.logins, /ACMFO27 \/ ACMFO31/);
   await O(`/companies/${acme}/admins`, { method: 'POST', body: { code: 'BOSS', name: 'Acme Admin', password: 'AcmeAdmin2026' } });
 
-  const ambiguous = await login('FO27', '1234');
-  assert.equal(ambiguous.status, 400);
-  assert.match(ambiguous.body.error, /company code/);
-  const brmc27 = (await login('FO27', '1234', 'brmc')).body;
-  const acme27 = (await login('FO27', '1234', 'ACME')).body;
+  // Codes taken in another company are refused everywhere.
+  assert.equal((await O(`/companies/${acme}/admins`, { method: 'POST', body: { code: 'ADMIN', name: 'Dup Admin', password: 'AcmeAdmin2026' } })).status, 409);
+  const brmc27 = (await login('FO27', '1234')).body;
+  const acme27 = (await login('ACMFO27', '1234')).body;
   assert.equal(brmc27.user.company.code, 'BRMC');
   assert.equal(acme27.user.company.code, 'ACME');
-  assert.equal((await login('BOSS', 'AcmeAdmin2026')).status, 200, 'unique code: company code optional');
-  assert.equal((await login('FO27', '1234', 'NOPE')).status, 401);
+  assert.equal((await login('BOSS', 'AcmeAdmin2026')).status, 200, 'no company code needed');
+  assert.equal((await login('FO27', '1234', 'NOPE')).status, 401, 'a wrong company code, if sent, still fails');
 
   const brmcLoans = (await call('/api/bootstrap', { token: brmc27.token })).body.loans;
   const acmeLoans = (await call('/api/bootstrap', { token: acme27.token })).body.loans;
@@ -139,13 +140,14 @@ test('overlord creates a company with its first admin; data stays inside each co
   // An officer can't write to another company's loan, and an admin can't read one.
   const cross = (await call('/api/records', { token: acme27.token, method: 'POST', body: { records: [record(brmcLoans[0].id)] } })).body.results[0];
   assert.equal(cross.status, 'rejected');
-  acmeAdmin = (await login('BOSS', 'AcmeAdmin2026', 'ACME')).body.token;
+  acmeAdmin = (await login('BOSS', 'AcmeAdmin2026')).body.token;
+  assert.equal((await call('/api/admin/users', { token: acmeAdmin, method: 'POST', body: { code: 'FO27', name: 'Copy Cat', role: 'officer', branch: 'Lucknow Rural', pin: '1234' } })).status, 409);
   assert.equal((await call(`/api/admin/loans/${encodeURIComponent(brmcLoans[0].id)}`, { token: acmeAdmin })).status, 404);
   const acmeList = (await call('/api/admin/loans?pageSize=100', { token: acmeAdmin })).body;
   const [{ n: acmeCount }] = await pool.query('SELECT COUNT(*) AS n FROM loans WHERE company_id = ?', [acme]);
   assert.equal(acmeList.total, acmeCount);
   const users = (await call('/api/admin/users', { token: acmeAdmin })).body.users;
-  assert.ok(users.every((u) => ['FO27', 'FO31', 'SUP1', 'ADMIN', 'BOSS'].includes(u.code)));
+  assert.ok(users.every((u) => ['ACMFO27', 'ACMFO31', 'ACMSUP1', 'ACMADMIN', 'BOSS'].includes(u.code)));
   assert.equal(users.length, 5);
 
   // Slip numbers are unique within a company, not across companies.
@@ -175,7 +177,7 @@ test('plans gate features; overrides beat the plan; officer limits are enforced'
   assert.equal((await call('/api/admin/loans/export', { token: acmeAdmin })).status, 403);
   assert.equal((await call('/api/admin/audit', { token: acmeAdmin })).status, 403);
 
-  const fo31 = (await login('FO31', '1234', 'ACME')).body.token;
+  const fo31 = (await login('ACMFO31', '1234')).body.token;
   const loan = (await call('/api/bootstrap', { token: fo31 })).body.loans[0];
   const refused = (await call('/api/records', { token: fo31, method: 'POST', body: { records: [deposit(loan.id, 'SLIP-900')] } })).body.results[0];
   assert.equal(refused.status, 'rejected');
@@ -235,7 +237,7 @@ test('lock and archive cut sessions and block sign-in; reopen restores', opts, a
   assert.equal((await O(`/companies/${acme}/status`, { method: 'POST', body: { action: 'lock' } })).status, 400, 'reason required');
   assert.equal((await O(`/companies/${acme}/status`, { method: 'POST', body: { action: 'lock', reason: 'Invoice unpaid' } })).status, 200);
   assert.equal((await call('/api/me', { token: acmeAdmin })).status, 401);
-  const blocked = await login('BOSS', 'AcmeAdmin2026', 'ACME');
+  const blocked = await login('BOSS', 'AcmeAdmin2026');
   assert.equal(blocked.status, 403);
   assert.match(blocked.body.error, /locked/);
   // Support can still enter a locked company to help sort it out.
@@ -250,7 +252,7 @@ test('lock and archive cut sessions and block sign-in; reopen restores', opts, a
 
   assert.equal((await O(`/companies/${acme}/status`, { method: 'POST', body: { action: 'unlock' } })).status, 409);
   assert.equal((await O(`/companies/${acme}/status`, { method: 'POST', body: { action: 'reopen' } })).status, 200);
-  assert.equal((await login('BOSS', 'AcmeAdmin2026', 'ACME')).status, 200);
+  assert.equal((await login('BOSS', 'AcmeAdmin2026')).status, 200);
 });
 
 test('overlord accounts and the overlord audit trail', opts, async () => {
@@ -324,4 +326,23 @@ test('home page demo requests: validated, honeypot ignored, listed and tracked i
   assert.equal((await O(`/leads/${leads[0].id}`, { method: 'PATCH', body: { status: 'contacted', note: 'Demo on Friday' } })).status, 200);
   assert.equal((await O('/leads?status=contacted')).body.leads[0].note, 'Demo on Friday');
   assert.equal((await call('/api/overlord/leads')).status, 401);
+});
+
+test('codes duplicated before the rule are renamed once, with their loans and records', opts, async () => {
+  const { migrate } = await import('../server/db.js');
+  const { hashPin } = await import('../server/auth.js');
+  // Recreate an old database: the global unique index missing and FO27 in two companies.
+  await pool.query('ALTER TABLE users DROP INDEX uq_users_code');
+  const [dh] = await pool.query("SELECT id FROM companies WHERE code = 'DATAHAAT'");
+  await pool.query("INSERT INTO users (company_id, code, name, role, branch, pin_hash) VALUES (?, 'FO27', 'Twin Officer', 'officer', 'Patna', ?)",
+    [dh.id, await hashPin('5555')]);
+  await pool.query("INSERT INTO loans (company_id, id, loan_no, branch, officer_code, product, principal, emi, disbursed_on, borrower, installments) VALUES (?, 'dh-twin', 'DH/1', 'Patna', 'FO27', 'Loan', 1000, 100, '2026-01-01', '{\"name\":\"X\",\"phone\":\"9876543210\"}', '[]')",
+    [dh.id]);
+  await migrate(pool);
+  const [twin] = await pool.query("SELECT code FROM users WHERE name = 'Twin Officer'");
+  assert.equal(twin.code, 'DATFO27');
+  assert.equal((await pool.query("SELECT officer_code FROM loans WHERE id = 'dh-twin'"))[0].officer_code, 'DATFO27');
+  assert.equal((await pool.query("SELECT u.code FROM users u JOIN companies c ON c.id = u.company_id WHERE c.code = 'BRMC' AND u.name = 'Priya Mishra'"))[0].code, 'FO27', 'the oldest keeps its code');
+  assert.equal((await login('DATFO27', '5555')).status, 200);
+  await assert.rejects(pool.query("INSERT INTO users (company_id, code, name, role, branch, pin_hash) VALUES (?, 'DATFO27', 'Third', 'officer', 'X', 'x')", [dh.id]), /Duplicate/);
 });

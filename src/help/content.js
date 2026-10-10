@@ -50,9 +50,8 @@ export const TOPICS = [
   {
     id: 'sign-in', category: 'start', audience: FIELD,
     title: 'Sign in and sign out',
-    summary: 'Log in with your company code, your code and PIN; when you can and cannot log out.',
+    summary: 'Log in with your code and PIN; when you can and cannot log out.',
     steps: [
-      'Enter your <b>company code</b> (for example BRMC — your admin gives it to you). The phone remembers it for next time.',
       'Enter your <b>officer / supervisor code</b> (for example FO27) and your <b>PIN</b>, then tap <b>Log in</b>.',
       'You stay signed in for 30 days on that phone. If your session expires, sign in again — nothing you saved is lost.',
       'To sign out: <b>Settings → Log out</b>.',
@@ -61,7 +60,6 @@ export const TOPICS = [
       'You cannot log out while records are still waiting to be sent. Get signal, wait for the header to show <b>● Live</b>, then log out.',
       'Five wrong PINs lock your code for 15 minutes.',
       'Forgot your PIN? Ask your admin to reset it — they will give you a new one.',
-      'If the app says <b>“Enter your company code as well”</b>, type the company code: the same officer code exists in another company on LoanDesk.',
     ],
   },
   {
@@ -90,11 +88,11 @@ export const TOPICS = [
     title: 'First-day setup for admins',
     summary: 'The order to set things up so officers can start the same day.',
     steps: [
-      'Sign in to the admin console with your <b>company code</b>, admin code and password, then <b>change your password</b> (account menu, top right).',
+      'Sign in to the admin console with your admin code and password, then <b>change your password</b> (account menu, top right).',
       'Add your <b>supervisors</b> and <b>field officers</b> under <b>Users</b>, each with the correct branch. Write down the PINs the console shows.',
       'Download the <b>Excel template</b> under <b>Import loans</b>, or export your loan system’s file, and <b>import your loans</b>.',
       'Open <b>Loans</b>, filter <b>Unassigned</b>, select them and <b>assign</b> each group to an officer of that branch.',
-      'Send each officer the app address, your <b>company code</b>, their code and PIN, and the guide <b>Install the app on a phone</b>.',
+      'Send each officer the app address, their code and PIN, and the guide <b>Install the app on a phone</b>.',
       'Check the <b>Dashboard</b> next morning: collections and visits should start appearing.',
     ],
     tips: ['The dashboard shows a <b>Getting started</b> checklist that ticks itself off as you complete these steps.'],

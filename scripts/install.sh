@@ -160,15 +160,14 @@ if [[ "$(q "SELECT COUNT(*) FROM users WHERE company_id = 1 AND role = 'admin'")
   say "Creating the BRMC admin account"
   ADMIN_PASS="Lr$(rand 12)$((RANDOM % 90 + 10))"
   as_app node server/admin.js add-user --company BRMC --code ADMIN --name "Administrator" --role admin --branch "Head Office" --pin "$ADMIN_PASS" >/dev/null
-  NEW_CREDS+=$'\n'"Admin console : http://localhost:$PORT/admin/${DOMAIN:+   (public: https://$DOMAIN/admin/)}"$'\n'"  Company code BRMC · admin code ADMIN · password $ADMIN_PASS"$'\n'
+  NEW_CREDS+=$'\n'"Admin console : http://localhost:$PORT/admin/${DOMAIN:+   (public: https://$DOMAIN/admin/)}"$'\n'"  BRMC admin: code ADMIN · password $ADMIN_PASS"$'\n'
 fi
 if [[ "$DEMO" == 1 ]]; then
   if [[ "$(q "SELECT COUNT(*) FROM users u JOIN companies c ON c.id = u.company_id WHERE c.code = 'DATAHAAT'")" == 0 ]]; then
     say "Loading demo data into DataHaat"
-    as_app node server/admin.js seed-demo --company DATAHAAT >/dev/null
     DEMO_PASS="Lr$(rand 12)$((RANDOM % 90 + 10))"
-    as_app node server/admin.js set-pin --company DATAHAAT --code ADMIN --pin "$DEMO_PASS" >/dev/null
-    NEW_CREDS+=$'\n'"DataHaat demo (company code DATAHAAT): admin ADMIN · password $DEMO_PASS"$'\n'"  field app: FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999)"$'\n'
+    DEMO_OUT="$(as_app node server/admin.js seed-demo --company DATAHAAT --password "$DEMO_PASS")"
+    NEW_CREDS+=$'\n'"${DEMO_OUT}"$'\n'
   else
     warn "DataHaat already has users — demo data not loaded."
   fi

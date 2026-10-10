@@ -419,10 +419,9 @@ try {
     $dhUsers = [int](Invoke-Sql "SELECT COUNT(*) FROM users u JOIN companies c ON c.id = u.company_id WHERE c.code = 'DATAHAAT'" $RootPass $DbName)
     if ($dhUsers -eq 0) {
       Step 'Loading demo data into DataHaat'
-      & $Node server\admin.js seed-demo --company DATAHAAT | Out-Null
-      if ($LASTEXITCODE -ne 0) { Fail 'Loading demo data failed.' }
       $DemoPass = 'Lr' + (New-Secret 12) + (Get-Random -Minimum 10 -Maximum 99)
-      & $Node server\admin.js set-pin --company DATAHAAT --code ADMIN --pin $DemoPass | Out-Null
+      $DemoOut = (& $Node server\admin.js seed-demo --company DATAHAAT --password $DemoPass) -join ' '
+      if ($LASTEXITCODE -ne 0) { Fail 'Loading demo data failed.' }
     } else {
       Note 'DataHaat already has users - demo data not loaded.'
     }
@@ -443,11 +442,10 @@ $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
 if ($newRootPass) { $cred = @($cred | Where-Object { $_ -notmatch '^MariaDB root password:' }) + "MariaDB root password: $newRootPass" }
 if ($AdminPass) {
   $cred = @($cred | Where-Object { $_ -notmatch '^Admin (code|password):' }) +
-    "Admin console: http://localhost:$Port/admin/  -  company code BRMC, admin code ADMIN" + "Admin password: $AdminPass"
+    "Admin console: http://localhost:$Port/admin/  -  admin code ADMIN" + "Admin password: $AdminPass"
 }
 if ($DemoPass) {
-  $cred = @($cred | Where-Object { $_ -notmatch '^Demo ' }) +
-    "Demo company DATAHAAT: admin ADMIN, password $DemoPass" + 'Demo field logins (company DATAHAAT): FO27 / FO31 (PIN 1234), supervisor SUP1 (PIN 9999)'
+  $cred = @($cred | Where-Object { $_ -notmatch '^Demo ' }) + "Demo $DemoOut"
 }
 if ($OverlordPass) {
   $cred += "Overlord console: http://localhost:$Port/overlord/"
@@ -504,8 +502,8 @@ if ($Public) {
 Write-Host "  App folder    : $AppDir   (settings in $envFile)"
 Write-Host "  Database      : $DbName on MariaDB ($($inst.Service), port $DbPort), user $DbUser"
 Write-Host "  Overlord      : http://localhost:$Port/overlord/"
-if ($AdminPass) { Write-Host "  BRMC admin    : company BRMC, code ADMIN, password $AdminPass" -ForegroundColor Cyan }
-if ($DemoPass) { Write-Host "  Demo admin    : company DATAHAAT, code ADMIN, password $DemoPass" -ForegroundColor Cyan }
+if ($AdminPass) { Write-Host "  BRMC admin    : code ADMIN, password $AdminPass" -ForegroundColor Cyan }
+if ($DemoPass) { Write-Host "  Demo          : $DemoOut" -ForegroundColor Cyan }
 if ($OverlordPass) { Write-Host "  Overlord      : $OverlordEmail / $OverlordPass" -ForegroundColor Cyan }
 if ($AdminPass -or $DemoPass -or $OverlordPass) {
   Write-Host "                  (saved in $CredFile - change passwords after signing in)"

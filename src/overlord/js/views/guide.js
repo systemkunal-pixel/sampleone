@@ -20,9 +20,9 @@ export async function render(el) {
 
       <h2>Adding a new lending company</h2>
       <ol>
-        <li><b>Companies → New company</b>. Pick a short <b>company code</b> (e.g. <code>SANJIVANI</code>); staff type it when they sign in.</li>
+        <li><b>Companies → New company</b>. Pick a short <b>company code</b> (e.g. <code>SANJIVANI</code>), the company's name inside LoanDesk.</li>
         <li>Choose the plan and create the first admin. Send the company code, admin code and password to the customer privately.</li>
-        <li>Their admin signs in at <code>/admin/</code>, adds staff and imports loans. Officers sign in to the phone app with the company code, their code and PIN.</li>
+        <li>Their admin signs in at <code>/admin/</code>, adds staff and imports loans. Officers sign in to the phone app with their code and PIN. User codes are unique across all of LoanDesk, so nobody types a company code.</li>
       </ol>
 
       <h2>Helping a customer: support access</h2>

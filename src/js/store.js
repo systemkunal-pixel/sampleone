@@ -80,35 +80,18 @@ function handleError(err) {
 
 // ---------- session ----------
 
-const COMPANY_KEY = 'loandesk:company';
-export function rememberedCompany() {
-  try {
-    return localStorage.getItem(COMPANY_KEY) || '';
-  } catch {
-    return '';
-  }
-}
-
-export async function login(company, code, pin) {
+/** Sign in with user code and PIN. Codes are unique across LoanDesk, so no company code is needed. */
+export async function login(code, pin) {
   const pending = state.outbox[0]?.officer;
-  const pendingCompany = state.session?.user?.company?.code;
   const wanted = String(code).trim().toUpperCase();
-  const wantedCompany = String(company || '').trim().toUpperCase();
-  if (pending && (pending !== wanted || (pendingCompany && wantedCompany && pendingCompany !== wantedCompany))) {
-    const vars = { n: state.outbox.length, code: pending, company: pendingCompany };
-    throw new Error(pendingCompany
-      ? t('This phone has {n} unsent record(s) from {code} ({company}). Log in as {code} to send them first.', vars)
-      : t('This phone has {n} unsent record(s) from {code}. Log in as {code} to send them first.', vars));
+  if (pending && pending !== wanted) {
+    throw new Error(t('This phone has {n} unsent record(s) from {code}. Log in as {code} to send them first.', { n: state.outbox.length, code: pending }));
   }
-  const res = await call('login', { method: 'POST', body: { company: wantedCompany, code: wanted, pin } }).catch((err) => {
+  const res = await call('login', { method: 'POST', body: { code: wanted, pin } }).catch((err) => {
     if (err instanceof OfflineError) throw new Error(t('Cannot reach the server. Check your connection and try again.'));
     throw err;
   });
-  try {
-    localStorage.setItem(COMPANY_KEY, res.user.company.code);
-  } catch {}
-  const sameUser = state.session?.user?.code === res.user.code &&
-    (!state.session.user.company || state.session.user.company.code === res.user.company.code);
+  const sameUser = state.session?.user?.code === res.user.code;
   state = { ...(sameUser ? state : blank()), session: { token: res.token, user: res.user } };
   if (!sameUser) await clearSlips().catch(() => {});
   save();

@@ -12,7 +12,7 @@ import { withTx, now } from './db.js';
 import { HttpError } from './http.js';
 import { newSecret, verifyCode, otpauthUrl } from './totp.js';
 import { PLANS, PLAN_CODES, FEATURES, FEATURE_KEYS, planMatrix, planLimits, companyEntitlements } from './plans.js';
-import { addUser, seedDemo, addOverlord, DEMO_LOGINS } from './admin.js';
+import { addUser, seedDemo, addOverlord, demoLogins, codeTaken } from './admin.js';
 import { registerUpdateRoutes } from './updates-api.js';
 
 const TICKET_MINUTES = 5; // between the password step and the authenticator code
@@ -317,12 +317,13 @@ export function mountOverlord(router, { pool, readJson, leads }) {
   R('POST', '/companies', async ({ req, ctx }) => {
     const b = await readJson(req);
     const code = str(b.code).toUpperCase();
-    if (!COMPANY_CODE.test(code)) throw new HttpError(400, 'Company code must be 2–12 letters or digits (staff type it when signing in).');
+    if (!COMPANY_CODE.test(code)) throw new HttpError(400, 'Company code must be 2–12 letters or digits.');
     const fields = companyFields(b);
     const admin = adminFields(b.admin);
     return withTx(pool, async (conn) => {
       const [dup] = await conn.query('SELECT id FROM companies WHERE code = ?', [code]);
       if (dup) throw new HttpError(409, `Company code ${code} is already taken.`);
+      if (await codeTaken(conn, admin.code)) throw new HttpError(409, `User code ${admin.code} is already used. Every user needs a code of their own.`);
       const res = await conn.query(
         `INSERT INTO companies (code, name, plan, max_officers, contact_name, contact_email, contact_phone, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -381,8 +382,7 @@ export function mountOverlord(router, { pool, readJson, leads }) {
     const admin = adminFields(await readJson(req));
     return withTx(pool, async (conn) => {
       const c = await companyRow(conn, params.id);
-      const [dup] = await conn.query('SELECT id FROM users WHERE company_id = ? AND code = ?', [c.id, admin.code]);
-      if (dup) throw new HttpError(409, `${c.code} already has a user ${admin.code}.`);
+      if (await codeTaken(conn, admin.code)) throw new HttpError(409, `User code ${admin.code} is already used. Every user needs a code of their own.`);
       await addUser(conn, { ...admin, companyId: c.id });
       await oaudit(conn, ctx, 'admin_added', c.id, { code: admin.code, name: admin.name });
       return { ok: true };
@@ -403,14 +403,15 @@ export function mountOverlord(router, { pool, readJson, leads }) {
 
   R('POST', '/companies/:id/demo', async ({ params, ctx }) => {
     const c = await companyRow(pool, params.id);
+    let codes;
     try {
-      await seedDemo(pool, c.id);
+      codes = await seedDemo(pool, c.id);
     } catch (err) {
       if (/already has/.test(err.message)) throw new HttpError(409, err.message);
       throw err;
     }
     await oaudit(pool, ctx, 'demo_loaded', c.id, null);
-    return { ok: true, logins: DEMO_LOGINS };
+    return { ok: true, logins: demoLogins(codes) };
   });
 
   // ----- support access -----
