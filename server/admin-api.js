@@ -6,6 +6,7 @@ import { loadLoans, upsertLoan, withTx, audit, now } from './db.js';
 import { HttpError, send } from './http.js';
 import { EMAIL } from './mail.js';
 import { locate, within, recruitmentPlan } from './geo.js';
+import { registerTeamRoutes, deputeNearbyFor } from './team.js';
 import ExcelJS from 'exceljs';
 import { readImportFile, normalise, checkAgainstDb, buildTemplate, ImportError, MAX_FILE_BYTES, officerFits } from './importer.js';
 
@@ -43,6 +44,7 @@ function userRow(u) {
     code: u.code, name: u.name, role: u.role, branch: u.branch, active: Boolean(u.active),
     email: u.email || null, summaryEmail: u.summary_email || 'daily',
     basePincode: u.base_pincode || null, rangeKm: u.range_km ?? null,
+    post: u.post || null, parentCode: u.parent_code || null, phone: u.phone || null,
     lastLoginAt: u.last_login_at, createdAt: u.created_at, loans: Number(u.loans || 0),
   };
 }
@@ -589,6 +591,8 @@ export function mountAdmin(router, { pool, authed, readJson }) {
       return { changed };
     });
   });
+
+  registerTeamRoutes(R, { pool, readJson, deputeNearby: (user, code) => deputeNearbyFor(pool, user, code, pincodeFigures) });
 
   // ---------- clients: the lenders whose accounts this company recovers ----------
 

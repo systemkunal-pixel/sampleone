@@ -427,3 +427,13 @@ ALTER TABLE loans ADD UNIQUE KEY IF NOT EXISTS uq_loans_company_client_loan_no (
 ALTER TABLE loans DROP INDEX IF EXISTS uq_loans_company_loan_no
 ;
 ALTER TABLE imports ADD COLUMN IF NOT EXISTS client_id INT UNSIGNED NULL
+;
+
+-- v10: the field team. State Heads → District Coordinators → Agents; everyone reports to one person above.
+-- Agents sign in as field officers, State Heads and Coordinators as supervisors of their own team.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS post ENUM('state_head', 'coordinator', 'agent') NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_code VARCHAR(12) NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(20) NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS area_states VARCHAR(300) NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS area_districts VARCHAR(1000) NULL;
+ALTER TABLE users ADD KEY IF NOT EXISTS ix_users_company_parent (company_id, parent_code)

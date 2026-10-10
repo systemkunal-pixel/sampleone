@@ -14,6 +14,7 @@ import { loadLoans, paymentFromRow, withTx, audit, now } from './db.js';
 import { acceptRecord, MAX_SLIP_BYTES } from './records.js';
 import { HttpError, send, readJson, Router } from './http.js';
 import { mountAdmin } from './admin-api.js';
+import { supervisorScope, scopeSql } from './team.js';
 
 const STATIC_DIR = resolve(import.meta.dirname, '..', 'src');
 const MAX_BODY = Math.ceil(MAX_SLIP_BYTES * 1.4) + 64 * 1024; // one record with a base64 slip
@@ -185,7 +186,7 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR, mail
     if (user.role === 'admin') throw new HttpError(403, 'Admin accounts use the admin console at /admin/.');
     const loans = user.role === 'officer'
       ? await loadLoans(pool, { companyId: user.companyId, officerCode: user.code })
-      : await loadLoans(pool, { companyId: user.companyId, branch: user.branch });
+      : await loadLoans(pool, { companyId: user.companyId, where: scopeSql(await supervisorScope(pool, user)) });
     const today = isoDate();
     const todays = await pool.query(
       'SELECT receipt_no FROM payments WHERE company_id = ? AND officer_code = ? AND recorded_at >= ?',
@@ -216,9 +217,11 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR, mail
       `SELECT s.mime_type, s.data, l.officer_code, l.branch FROM deposit_slips s
        JOIN payments p ON p.id = s.payment_id JOIN loans l ON l.id = p.loan_id WHERE s.payment_id = ? AND l.company_id = ?`,
       [id, user.companyId]);
-    const allowed = row && (
-      user.role === 'admin' ||
-      (user.role === 'supervisor' ? row.branch === user.branch : row.officer_code === user.code));
+    let allowed = row && (user.role === 'admin' || (user.role === 'officer' && row.officer_code === user.code));
+    if (row && user.role === 'supervisor') {
+      const sc = scopeSql(await supervisorScope(pool, user));
+      [{ ok: allowed }] = await pool.query(`SELECT COUNT(*) AS ok FROM payments p JOIN loans l ON l.id = p.loan_id WHERE p.id = ? AND ${sc.sql}`, [id, ...sc.args]);
+    }
     if (!allowed) throw new HttpError(404, 'Slip not found.');
     send(res, 200, row.data, {
       'Content-Type': row.mime_type,
@@ -232,13 +235,14 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR, mail
   router.add('GET', '/api/deposits', async (req, res, params, query) => {
     const { user } = await authed(req, 'supervisor');
     const status = query.get('status') || 'pending';
+    const sc = scopeSql(await supervisorScope(pool, user));
     if (!['pending', 'verified', 'rejected'].includes(status)) throw new HttpError(400, 'Unknown status.');
     const rows = await pool.query(
       `SELECT p.*, l.loan_no, l.borrower, l.emi, u.name AS officer_name FROM payments p
        JOIN loans l ON l.id = p.loan_id LEFT JOIN users u ON u.company_id = p.company_id AND u.code = p.officer_code
-       WHERE l.company_id = ? AND l.branch = ? AND p.verification = ?
+       WHERE l.company_id = ? AND ${sc.sql} AND p.verification = ?
        ORDER BY ${status === 'pending' ? 'p.recorded_at ASC' : 'p.verified_at DESC'} LIMIT 200`,
-      [user.companyId, user.branch, status]);
+      [user.companyId, ...sc.args, status]);
     return {
       deposits: rows.map((r) => ({
         ...paymentFromRow(r),
@@ -258,10 +262,11 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR, mail
     const reason = String(note || '').trim().slice(0, 300);
     if (decision === 'rejected' && !reason) throw new HttpError(400, 'Give a reason for rejecting the deposit.');
     return withTx(pool, async (conn) => {
+      const sc = scopeSql(await supervisorScope(conn, user));
       const [p] = await conn.query(
-        `SELECT p.verification, p.verified_by, l.branch FROM payments p JOIN loans l ON l.id = p.loan_id
-         WHERE p.id = ? AND l.company_id = ? AND p.slip_no IS NOT NULL FOR UPDATE`, [id, user.companyId]);
-      if (!p || p.branch !== user.branch) throw new HttpError(404, 'Deposit not found.');
+        `SELECT p.verification, p.verified_by FROM payments p JOIN loans l ON l.id = p.loan_id
+         WHERE p.id = ? AND l.company_id = ? AND p.slip_no IS NOT NULL AND ${sc.sql} FOR UPDATE`, [id, user.companyId, ...sc.args]);
+      if (!p) throw new HttpError(404, 'Deposit not found.');
       if (p.verification !== 'pending') {
         throw new HttpError(409, `Already ${p.verification} by ${p.verified_by}.`);
       }

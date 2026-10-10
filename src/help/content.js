@@ -390,6 +390,21 @@ export const TOPICS = [
     tips: ['Admin sessions end after 12 hours or when you close the browser.'],
   },
   {
+    id: 'team', category: 'howto', audience: ['admin'],
+    title: 'Team: State Heads, Coordinators and Agents',
+    summary: 'Build the field team top-down and import people under a parent officer.',
+    steps: [
+      'Open <b>Team</b> → <b>Import people</b>. Choose the <b>Post</b> (State Head, District Coordinator or Agent) and the <b>Parent officer</b> they report to.',
+      'Download the template, fill in Name and Mobile (Code, Home pincode, Range, District and PIN are optional), and drop the file. Or use <b>Add one person</b>.',
+      'Check the rows (warnings are imported anyway; rows with a taken code are not) and click <b>Add</b>. For agents, leave <b>depute to pincodes in range</b> ticked.',
+      'Download the <b>logins</b> and give each person their code and PIN privately — the PINs are not shown again.',
+    ],
+    tips: [
+      'Agents sign in to the phone app and see their accounts. State Heads and Coordinators sign in too and see their team’s accounts; Coordinators also see unassigned accounts in their districts and verify their agents’ bank deposits.',
+      'Use <b>Move</b> in the hierarchy when someone changes Coordinator or State Head.',
+    ],
+  },
+  {
     id: 'clients', category: 'howto', audience: ['admin'],
     title: 'Clients: whose accounts you recover',
     summary: 'Each lender (e.g. VFS Capital Limited) is a client; its accounts are imported, reported and billed separately.',

@@ -214,15 +214,18 @@ export function loanFromRow(r) {
 }
 
 /** One company's loans with their payments and visits, filtered by officer, branch or id. */
-export async function loadLoans(conn, { companyId, officerCode, branch, loanId }) {
+export async function loadLoans(conn, { companyId, officerCode, branch, loanId, where: custom }) {
   if (!companyId) throw new Error('loadLoans needs a companyId');
-  const [where, arg] = loanId
-    ? ['l.id = ?', loanId]
-    : officerCode
-      ? ['l.officer_code = ?', officerCode]
-      : ['l.branch = ?', branch];
+  // custom: { sql, args } on loans `l` (a supervisor's team, see team.js)
+  const [where, extra] = custom
+    ? [custom.sql, custom.args]
+    : loanId
+      ? ['l.id = ?', [loanId]]
+      : officerCode
+        ? ['l.officer_code = ?', [officerCode]]
+        : ['l.branch = ?', [branch]];
   const scope = `l.company_id = ? AND ${where}`;
-  const args = [companyId, arg];
+  const args = [companyId, ...extra];
   const loans = (await conn.query(
     `SELECT l.*, c.code AS client_code, c.name AS client_name FROM loans l LEFT JOIN clients c ON c.id = l.client_id
      WHERE ${scope} ORDER BY l.loan_no`, args)).map(loanFromRow);

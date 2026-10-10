@@ -303,3 +303,69 @@ test('agents have a home pincode and range; the recruitment plan places agents w
   assert.deepEqual(wb.worksheets.map((w) => w.name), ['Agents to recruit', 'Thin areas', 'Pincodes', 'About']);
   assert.equal(wb.getWorksheet('Agents to recruit').rowCount, 3);
 });
+
+test('team: State Head → Coordinators → Agents imported under a parent; managers see their team', opts, async () => {
+  const T = (path, body, method = 'POST') => call(`/api/admin/team${path}`, { method, body });
+  // State Heads report to the admin; a parent is refused for them.
+  assert.equal((await T('/preview', { post: 'state_head', parentCode: 'FO27', people: [{ name: 'X Y' }] })).status, 400);
+  const sh = (await T('/commit', { post: 'state_head', people: [{ name: 'Rajesh Kumar', phone: '9831000001', states: 'West Bengal' }] })).body;
+  assert.equal(sh.logins.length, 1);
+  const shCode = sh.logins[0].code;
+  assert.match(shCode, /^SH\d{2}$/);
+
+  // Coordinators need a State Head as parent.
+  assert.equal((await T('/preview', { post: 'coordinator', parentCode: 'FO27', people: [{ name: 'A B' }] })).status, 400);
+  const dc = (await T('/commit', { post: 'coordinator', parentCode: shCode, people: [
+    { name: 'Arup Das', phone: '9831000002', districts: 'Howrah; Hooghly', code: 'DCHWH' },
+    { name: 'Imran Ali', phone: '98310', districts: 'Purnea' },
+  ] })).body;
+  assert.deepEqual(dc.logins.map((l) => l.code), ['DCHWH', 'DC0001']);
+
+  // Agents: preview shows warnings, refuses taken codes, and makes codes.
+  const pre = (await T('/preview', { post: 'agent', parentCode: 'DCHWH', defaultRange: 15, people: [
+    { name: 'Sk Rafiq', phone: '9830012345', basePincode: '700001', rangeKm: 10 },
+    { name: 'Pallabi Mondal', phone: '1234', basePincode: '' },
+    { name: 'Taken Code', code: 'FO27', phone: '9830000000' },
+  ] })).body;
+  // Codes continue after the highest AG number in use (AG1, AG2 exist from earlier).
+  assert.deepEqual(pre.rows.map((r) => [r.name, r.code, r.rangeKm, r.warnings.length]), [['Sk Rafiq', 'AG0003', 10, 0], ['Pallabi Mondal', 'AG0004', 15, 2]]);
+  assert.match(pre.errors[0].errors[0], /FO27 is already used/);
+  assert.equal(pre.rows[0].pin, undefined, 'PINs are not shown in the preview');
+
+  // An unassigned SBI account in Kolkata (700001) and one in Howrah district.
+  const sbi = (await call('/api/admin/clients')).body.clients.find((c) => c.code === 'SBI');
+  await importAll(await recoveryList([['K001', 700001, 'KOLKATA', 3000], ['H900', 711302, 'HOWRAH', 4500]]), 'sbi-2.xlsx', sbi.id);
+  const ag = (await T('/commit', { post: 'agent', parentCode: 'DCHWH', autoDepute: true, people: [
+    { name: 'Sk Rafiq', phone: '9830012345', basePincode: '700001', rangeKm: 10 },
+    { name: 'Pallabi Mondal', phone: '1234' },
+  ] })).body;
+  assert.equal(ag.logins.length, 2);
+  assert.ok(ag.deputed >= 1, 'the Kolkata account went to the agent within range');
+  const rafiq = ag.logins.find((l) => l.name === 'Sk Rafiq');
+  assert.match(rafiq.pin, /^\d{4}$/);
+  const agentPhone = (await call('/api/bootstrap', { token: await login(rafiq.code, rafiq.pin) })).body;
+  assert.ok(agentPhone.loans.some((l) => l.loanNo === 'K001'));
+
+  // The Coordinator sees the agents' accounts plus unassigned accounts in Howrah and Hooghly, not others.
+  const dcPin = dc.logins[0].pin;
+  const dcView = (await call('/api/bootstrap', { token: await login('DCHWH', dcPin) })).body;
+  const nos = dcView.loans.map((l) => l.loanNo);
+  assert.ok(nos.includes('K001') && nos.includes('H900'), nos.join(','));
+  assert.ok(!nos.includes('V003'), 'East Medinipore is not in their districts');
+  // The State Head sees the whole team below them.
+  const shView = (await call('/api/bootstrap', { token: await login(shCode, sh.logins[0].pin) })).body;
+  assert.ok(shView.loans.length >= dcView.loans.length);
+
+  // The tree adds up; moving checks the post rules and loops.
+  const tree = (await call('/api/admin/team')).body;
+  assert.deepEqual([tree.counts.state_head, tree.counts.coordinator, tree.counts.agent], [1, 2, 2]);
+  const top = tree.roots[0];
+  assert.equal(top.people, 4);
+  const arup = top.children.find((c) => c.code === 'DCHWH');
+  assert.equal(arup.accounts, arup.children.reduce((s, k) => s + k.accounts, 0));
+  assert.ok(arup.unassigned >= 1);
+  assert.equal((await T(`/${rafiq.code}`, { parentCode: shCode }, 'PATCH')).status, 400, 'agents report to a Coordinator');
+  assert.equal((await T(`/${rafiq.code}`, { parentCode: 'DC0001' }, 'PATCH')).status, 200);
+  assert.equal((await call('/api/admin/team')).body.roots[0].children.find((c) => c.code === 'DC0001').children.length, 1);
+  assert.equal((await call('/api/admin/users')).body.users.find((u) => u.code === rafiq.code).parentCode, 'DC0001');
+});

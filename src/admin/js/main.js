@@ -7,6 +7,7 @@ import * as users from './views/users.js';
 import * as loans from './views/loans.js';
 import * as areas from './views/areas.js';
 import * as clients from './views/clients.js';
+import * as team from './views/team.js';
 import * as importer from './views/import.js';
 import * as audit from './views/audit.js';
 import * as help from './views/help.js';
@@ -14,10 +15,11 @@ import * as help from './views/help.js';
 const $root = document.getElementById('root');
 
 // Labels stay English here and are translated where shown: t(p.label).
-/* i18n: t('Dashboard') t('Users') t('Clients') t('Loans') t('Areas') t('Import loans') t('Audit log') t('Help & guides') */
+/* i18n: t('Dashboard') t('Users') t('Team') t('Clients') t('Loans') t('Areas') t('Import loans') t('Audit log') t('Help & guides') */
 const PAGES = [
   { path: 'dashboard', label: 'Dashboard', icon: 'dashboard', view: dashboard },
   { path: 'users', label: 'Users', icon: 'users', view: users },
+  { path: 'team', label: 'Team', icon: 'layers', view: team },
   { path: 'clients', label: 'Clients', icon: 'building', view: clients },
   { path: 'loans', label: 'Loans', icon: 'loans', view: loans },
   { path: 'areas', label: 'Areas', icon: 'map', view: areas },
@@ -255,11 +257,11 @@ function renderShell() {
           <div class="nav-label">${t('Overview')}</div>
           ${navLink(PAGES[0])}
           <div class="nav-label">${t('Manage')}</div>
-          ${PAGES.slice(1, 6).map(navLink).join('')}
+          ${PAGES.slice(1, 7).map(navLink).join('')}
           <div class="nav-label">${t('Compliance')}</div>
-          ${navLink(PAGES[6])}
-          <div class="nav-label">${t('Support')}</div>
           ${navLink(PAGES[7])}
+          <div class="nav-label">${t('Support')}</div>
+          ${navLink(PAGES[8])}
         </nav>
         <div class="sidebar-foot"><b>${esc(user.company.name)}</b><br>${t('Company code {company} · signed in as {user}', { company: esc(user.company.code), user: esc(user.code) })}<br>${t('Field app: {link}', { link: `<a href="../app/" target="_blank" rel="noopener">${t('open')}</a>` })}</div>
       </aside>

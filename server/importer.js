@@ -257,6 +257,23 @@ async function readWorkbook(buf) {
 
 export class ImportError extends Error {}
 
+/** Any table file (Excel, CSV) as records keyed by the given column aliases: { records, map }. */
+export async function readTable(fileName, buf, columns, maxRows = MAX_ROWS) {
+  if (buf.length > MAX_FILE_BYTES) throw new ImportError('File is larger than 10 MB. Split it into smaller files.');
+  const ext = (fileName.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+  let table;
+  let sheet = 'Sheet';
+  if (ext === 'csv') table = parseCsv(buf.toString('utf8'));
+  else if (ext === 'xlsx') {
+    const wb = await readWorkbook(buf);
+    table = wb.loans.table;
+    sheet = wb.loans.name;
+  } else throw new ImportError('Upload an Excel (.xlsx) or CSV (.csv) file.');
+  const { records, map } = tableToRecords(table, columns, sheet);
+  if (records.length > maxRows) throw new ImportError(`Too many rows (${records.length}); the limit is ${maxRows} per file.`);
+  return { records, map };
+}
+
 /**
  * Reads an uploaded file into raw loan records plus optional installment records.
  * Structured JSON (the API's loan shape, with borrower{} and installments[]) is passed through as-is.

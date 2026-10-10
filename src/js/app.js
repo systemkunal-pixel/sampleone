@@ -420,7 +420,7 @@ function viewReceipt(loanId, paymentId) {
     ${header(d ? t('Acknowledgement') : t('Receipt'), `#/loan/${loan.id}`, d ? 'record-bank-deposit' : 'share-receipt')}
     <p class="sync-line ${p.synced ? 'ok' : 'warn'}">${p.synced ? `✓ ${t('Received by server')}` : `⏳ ${t('Saved on this phone — sends automatically when the server is reachable')}`}</p>
     <section class="card receipt" id="receipt">
-      <div class="center"><strong>${d ? t('BANK DEPOSIT ACKNOWLEDGEMENT') : t('PAYMENT RECEIPT')}</strong><div class="muted small">${esc(t('{branch} branch', { branch: loan.branch || me.branch }))}</div></div>
+      <div class="center"><strong>${d ? t('BANK DEPOSIT ACKNOWLEDGEMENT') : t('PAYMENT RECEIPT')}</strong><div class="muted small">${loan.client ? esc([loan.client.name, loan.branch].filter(Boolean).join(' · ')) : esc(t('{branch} branch', { branch: loan.branch || me.branch }))}</div></div>
       <dl>
         <dt>${d ? t('Ack. no.') : t('Receipt no.')}</dt><dd>${esc(p.receiptNo)}</dd>
         <dt>${d ? t('Recorded') : t('Date & time')}</dt><dd>${esc(fmtWhen(p.at))}</dd>
@@ -501,7 +501,7 @@ function viewSettings() {
     ${header(t('Settings'), '', 'work-offline')}
     <section class="card">
       <h2>${esc(me.name)}</h2>
-      <p class="muted small">${esc(me.code)} · ${me.role === 'officer' ? t('Field officer') : t('Supervisor')} · ${esc(me.branch)}</p>
+      <p class="muted small">${esc(me.code)} · ${me.role === 'officer' ? t('Field officer') : t('Supervisor')}${me.branch ? ` · ${esc(me.branch)}` : ''}</p>
       ${me.company ? `<p class="muted small">${esc(me.company.name)} · ${esc(t('company code {code}', { code: me.company.code }))}</p>` : ''}
     </section>
     <section class="card">
