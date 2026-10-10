@@ -62,6 +62,11 @@ export default [
   // server/admin-api.js
   'Choose how often to send the summary email.',
   'Choose the pincodes to depute an agent to.',
+  // server/billing.js
+  'Enter the circle name.',
+  'Circle not found.',
+  '{client} already has a circle called {name}.',
+  'Choose the period (from and to dates).',
   // server/team.js
   'State Heads report to the company admin; leave the parent empty.',
   'Choose the {post} these people report to.',

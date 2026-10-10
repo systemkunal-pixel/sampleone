@@ -390,6 +390,31 @@ export const TOPICS = [
     tips: ['Admin sessions end after 12 hours or when you close the browser.'],
   },
   {
+    id: 'circles', category: 'howto', audience: ['admin'],
+    title: 'Circles: billing areas of a client',
+    summary: 'Group a client’s districts the way the client bills: Client → State → Circle → District → Branch.',
+    steps: [
+      'Open <b>Clients</b> → <b>Circles</b> on the client → <b>Add circle</b>.',
+      'Name the circle, set its fee % if it differs from the client’s, and tick whole states or single districts — a circle may take districts from two states.',
+      'Save. Every account goes to the most specific match: a pincode listed on a circle, then its district, then its state. Accounts in no circle are billed under their state.',
+    ],
+    tips: [
+      'If the client’s file has a <b>Circle</b> column, that value wins for those accounts (the circle is created if it does not exist).',
+      'Changing circles later does not change past bills: each payment keeps the circle it had on the day it was collected.',
+    ],
+  },
+  {
+    id: 'billing', category: 'howto', audience: ['admin'],
+    title: 'Billing report',
+    summary: 'Collections of one client for a period, with the fee, ready for the invoice.',
+    steps: [
+      'Open <b>Billing</b>, choose the client and the period (from and to).',
+      'Keep <b>Bill verified collections only</b> so a bank deposit is billed only after a supervisor verifies the slip.',
+      'Expand State → Circle → District → Branch to check the totals, then <b>Download Excel</b>: Summary, Circles, every Receipt, and an About sheet.',
+    ],
+    tips: ['The fee is the circle’s fee % where set, otherwise the client’s fee % (Clients → edit).'],
+  },
+  {
     id: 'team', category: 'howto', audience: ['admin'],
     title: 'Team: State Heads, Coordinators and Agents',
     summary: 'Build the field team top-down and import people under a parent officer.',

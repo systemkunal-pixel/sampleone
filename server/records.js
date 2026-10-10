@@ -90,6 +90,8 @@ async function storePayment(conn, user, loanId, r, slip, features) {
         dep ? 'pending' : null,
       ]
     );
+    // Billing keeps the client and circle the account had on the day it was collected.
+    await conn.query('UPDATE payments p JOIN loans l ON l.id = p.loan_id SET p.client_id = l.client_id, p.circle_id = l.circle_id WHERE p.id = ?', [r.id]);
   } catch (err) {
     if (err.code === 'ER_DUP_ENTRY' && /slip/.test(err.message)) {
       const [other] = await conn.query(

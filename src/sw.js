@@ -1,5 +1,5 @@
 // App-shell service worker: cache-first for local assets so the app opens with no network.
-const CACHE = 'loan-recovery-v15';
+const CACHE = 'loan-recovery-v16';
 const SHELL = [
   './',
   './index.html',

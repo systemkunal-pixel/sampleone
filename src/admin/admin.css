@@ -630,3 +630,12 @@ details[open] > .area-head > .area-caret { transform: rotate(90deg); }
   .tree-row .num { text-align: left; }
   .tree-row .row-actions { grid-column: 1 / -1; justify-content: flex-start; }
 }
+
+/* Circle editor */
+.circle-state { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; margin: 0; }
+.circle-state .row { display: flex; gap: 8px; align-items: center; }
+.circle-districts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; margin: 8px 0 0 24px; font-size: .88rem; }
+/* Billing tree */
+.bill-row td:first-child { white-space: nowrap; }
+.bill-row.l1 td:first-child { padding-left: 34px; } .bill-row.l2 td:first-child { padding-left: 58px; } .bill-row.l3 td:first-child { padding-left: 82px; }
+.bill-row.l0 { font-weight: 650; } .bill-row.l3 { color: var(--text-2); }

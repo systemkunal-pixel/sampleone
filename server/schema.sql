@@ -437,3 +437,31 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(20) NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS area_states VARCHAR(300) NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS area_districts VARCHAR(1000) NULL;
 ALTER TABLE users ADD KEY IF NOT EXISTS ix_users_company_parent (company_id, parent_code)
+;
+
+-- v11: circles — billing areas a client's accounts are grouped into, defined by the company per client
+-- (whole states, districts — possibly from two states — or single pincodes). Each payment keeps the
+-- client and circle it had when it was collected, so a past bill never changes.
+CREATE TABLE IF NOT EXISTS circles (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id  INT UNSIGNED NOT NULL,
+  client_id   INT UNSIGNED NOT NULL,
+  name        VARCHAR(100) NOT NULL,
+  fee_pct     DECIMAL(5,2) NULL,
+  created_at  DATETIME     NOT NULL,
+  UNIQUE KEY uq_circles_client_name (client_id, name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS circle_areas (
+  circle_id  INT UNSIGNED NOT NULL,
+  kind       ENUM('state', 'district', 'pincode') NOT NULL,
+  value      VARCHAR(100) NOT NULL,
+  PRIMARY KEY (circle_id, kind, value),
+  CONSTRAINT fk_circle_areas FOREIGN KEY (circle_id) REFERENCES circles (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS circle_id INT UNSIGNED NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS circle_in_file VARCHAR(100) NULL;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS client_id INT UNSIGNED NULL;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS circle_id INT UNSIGNED NULL;
+UPDATE payments p JOIN loans l ON l.id = p.loan_id SET p.client_id = l.client_id WHERE p.client_id IS NULL AND l.client_id IS NOT NULL

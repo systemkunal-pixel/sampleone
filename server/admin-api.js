@@ -7,6 +7,7 @@ import { HttpError, send } from './http.js';
 import { EMAIL } from './mail.js';
 import { locate, within, recruitmentPlan } from './geo.js';
 import { registerTeamRoutes, deputeNearbyFor } from './team.js';
+import { registerBillingRoutes, resolveCircles } from './billing.js';
 import ExcelJS from 'exceljs';
 import { readImportFile, normalise, checkAgainstDb, buildTemplate, ImportError, MAX_FILE_BYTES, officerFits } from './importer.js';
 
@@ -593,6 +594,7 @@ export function mountAdmin(router, { pool, authed, readJson }) {
   });
 
   registerTeamRoutes(R, { pool, readJson, deputeNearby: (user, code) => deputeNearbyFor(pool, user, code, pincodeFigures) });
+  registerBillingRoutes(R, { pool, readJson });
 
   // ---------- clients: the lenders whose accounts this company recovers ----------
 
@@ -722,6 +724,7 @@ export function mountAdmin(router, { pool, authed, readJson }) {
         'INSERT INTO imports (company_id, at, user_code, file_name, total_rows, created, updated, skipped, client_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [user.companyId, now(), user.code, str(fileName).slice(0, 200) || 'upload', Number(totalRows) || rows.length, created, updated, skipped, client?.id ?? null]);
       for (const r of rows) await upsertLoan(conn, user.companyId, r.loan, res.insertId);
+      if (client) await resolveCircles(conn, user.companyId, client.id);
       await audit(conn, user, 'loans_imported', String(res.insertId), { file: fileName, created, updated, skipped, ...(client ? { client: client.code } : {}) });
       return { importId: res.insertId, created, updated, skipped };
     });

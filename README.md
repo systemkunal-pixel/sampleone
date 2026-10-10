@@ -206,6 +206,42 @@ The last five backups are kept in `backups/`. **History** and **Activity** recor
 
 The installers now run `server/supervisor.js` (the updater agent) instead of `server/index.js`. It keeps the web server running and restarts it if it stops. Changes to the agent itself take effect the next time the service restarts (e.g. after re-running the installer). On Windows the installer sets `DB_BIN_DIR` so the agent can find `mariadb-dump`.
 
+## Clients, circles and billing
+
+A company that recovers loans for lenders keeps each lender as a **client** (Admin → **Clients**), for example VFS Capital
+Limited. The levels are: Client → State → Circle (optional) → District → Branch (optional) → Accounts.
+
+- **Import:** Import loans asks which client the file belongs to. Every column of the client's file is kept on each account,
+  both as typed fields (customer code, asset class, outstanding, interest rate, due since, overdue days, principal /
+  interest / other / total overdue, NPA date) and as the original row, so later reports can use any column. Account numbers
+  are matched within a client.
+- **Circles:** Clients → **Circles** holds a client's billing areas: whole states, districts (also from two states) or single
+  pincodes. An account belongs to the most specific match (pincode, then district, then state). A **Circle** column in the
+  file overrides the rules. Accounts in no circle are billed under their state.
+- **Billing:** Admin → **Billing** shows one client's collections for a period by State → Circle → District → Branch: receipts,
+  billable amount, pending and rejected deposits, and the fee (the circle's fee % where set, otherwise the client's).
+  By default only verified collections are billed, so a bank deposit counts once its slip is verified. The Excel download
+  has Summary, Circles, Receipts and About sheets. Each payment keeps the client and circle it had on the day it was
+  collected, so a bill never changes afterwards.
+
+## Team: State Heads, District Coordinators and Agents
+
+Admin → **Team** shows the field team as a tree (State Head → District Coordinators → Agents). Team size, accounts,
+overdue, this month's collections and unassigned accounts add up through the tree.
+
+**Import people:** choose the post and the parent officer, then upload an Excel/CSV list (Name, Mobile; optionally Code,
+Home pincode, Range km, State, District, PIN), or add one person at a time.
+- **Codes and PINs:** codes are made when the file has none (SH01, DC0001, AG0001) and PINs are random. A logins sheet is
+  shown once after the import.
+- **Deputing:** new agents can be deputed at once to the pincodes within their range that have no agent.
+
+**What each post sees:**
+- Agents sign in as field officers.
+- State Heads and Coordinators sign in to the phone app as supervisors of their own team: their agents' accounts plus
+  unassigned accounts in their districts. They also verify their team's bank deposits.
+
+The team is not tied to a client: an agent works every client's accounts in their pincodes.
+
 ## Areas, agents and the recruitment plan
 
 **Admin → Areas** groups accounts that carry a pincode by State → District → Pincode. It has three tabs:

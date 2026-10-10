@@ -44,7 +44,7 @@ before(async () => {
     host: env.TEST_DB_HOST || '127.0.0.1', port: Number(env.TEST_DB_PORT) || 3306,
     user: env.TEST_DB_USER, password: env.TEST_DB_PASSWORD || '', database: env.TEST_DB_NAME, connectionLimit: 5,
   });
-  for (const t of ['clients', 'area_agents', 'password_resets', 'mail_log', 'mail_settings', 'imports', 'audit_log', 'deposit_slips', 'visits', 'payments', 'sessions', 'loans', 'users', 'companies',
+  for (const t of ['circle_areas', 'circles', 'clients', 'area_agents', 'password_resets', 'mail_log', 'mail_settings', 'imports', 'audit_log', 'deposit_slips', 'visits', 'payments', 'sessions', 'loans', 'users', 'companies',
     'overlord_sessions', 'overlords', 'support_sessions', 'overlord_audit', 'plans', 'plan_features', 'company_feature_overrides',
     'platform_updates', 'platform_update_events', 'platform_state', 'leads']) {
     await pool.query(`DROP TABLE IF EXISTS ${t}`);
@@ -368,4 +368,57 @@ test('team: State Head → Coordinators → Agents imported under a parent; mana
   assert.equal((await T(`/${rafiq.code}`, { parentCode: 'DC0001' }, 'PATCH')).status, 200);
   assert.equal((await call('/api/admin/team')).body.roots[0].children.find((c) => c.code === 'DC0001').children.length, 1);
   assert.equal((await call('/api/admin/users')).body.users.find((u) => u.code === rafiq.code).parentCode, 'DC0001');
+});
+
+test('circles: pincode beats district beats state; the bill keeps the circle a payment had when collected', opts, async () => {
+  const vfsId = (await call('/api/admin/clients')).body.clients.find((c) => c.code === 'VFS').id;
+  const C = (path = '', body, method = 'POST') => call(`/api/admin/clients/${vfsId}/circles${path}`, { method, body });
+  const circleOf = async (loanNo) => (await pool.query(
+    "SELECT ci.name FROM loans l LEFT JOIN circles ci ON ci.id = l.circle_id JOIN clients c ON c.id = l.client_id WHERE c.code = 'VFS' AND l.loan_no = ?", [loanNo]))[0]?.name ?? null;
+
+  let view = (await C('', undefined, 'GET')).body;
+  assert.equal(view.unmatched, 4, 'no circles yet');
+  assert.deepEqual(view.states.map((s) => s.state), ['WEST BENGAL']);
+  // A state-wide circle, and a district circle that may also take districts of another state.
+  const south = (await C('', { name: 'South Bengal', states: ['West Bengal'] })).body;
+  assert.equal(south.unmatched, 0);
+  const kol = (await C('', { name: 'Kolkata Circle', feePct: 10, districts: [{ state: 'WEST BENGAL', district: 'HOWRAH' }, 'ODISHA|BALESHWAR'] })).body;
+  assert.equal((await C('', { name: 'kolkata circle' })).status, 409);
+  assert.deepEqual(await Promise.all(['V001', 'V003'].map(circleOf)), ['Kolkata Circle', 'South Bengal']);
+
+  // Money collected now is billed to Kolkata Circle, even if the circles change later.
+  const ag1 = await login('AG1', '2468');
+  const v1 = (await call('/api/bootstrap', { token: ag1 })).body.loans.find((l) => l.client?.code === 'VFS' && l.loanNo === 'V001');
+  const pay = (id, amount) => ({ type: 'payment', loanId: v1.id, record: { id, at: new Date().toISOString().slice(0, 19), amount, mode: 'Cash', reference: '', receiptNo: `R-${id}` } });
+  const rec = (await call('/api/records', { token: ag1, method: 'POST', body: { records: [pay('bill-1', 1000), pay('bill-2', 500)] } })).body;
+  assert.deepEqual(rec.results.map((r) => r.status), ['accepted', 'accepted']);
+
+  // A pincode rule beats the district rule; then V001's pincode moves to South Bengal.
+  await C(`/${south.id}`, { name: 'South Bengal', states: ['WEST BENGAL'], pincodes: ['711302'] }, 'PUT');
+  assert.equal(await circleOf('V001'), 'South Bengal');
+  // A Circle column in the client's file overrides the rules (and creates the circle).
+  await pool.query("UPDATE loans l JOIN clients c ON c.id = l.client_id SET l.circle_in_file = 'Special' WHERE c.code = 'VFS' AND l.loan_no = 'V002'");
+  await C(`/${kol.id}`, { name: 'Kolkata Circle', feePct: 10, districts: ['WEST BENGAL|HOWRAH'] }, 'PUT');
+  assert.equal(await circleOf('V002'), 'Special');
+
+  const today = new Date().toISOString().slice(0, 10);
+  await call(`/api/admin/clients/${vfsId}`, { method: 'PATCH', body: { feePct: 12.5 } });
+  const bill = (await call(`/api/admin/billing?client=${vfsId}&from=${today}&to=${today}`)).body;
+  assert.equal(bill.total.billable, 1500);
+  assert.equal(bill.total.receipts, 2);
+  assert.equal(bill.total.fee, 150, "Kolkata Circle's own 10% beats the client's 12.5%");
+  assert.deepEqual(bill.states[0].children.map((c) => c.name), ['Kolkata Circle'], 'billed to the circle it had when collected');
+  assert.deepEqual(bill.states[0].children[0].children.map((d) => d.name), ['HOWRAH']);
+  assert.equal((await call(`/api/admin/billing?client=${vfsId}&from=${today}&to=2000-01-01`)).status, 400);
+  const xlsx = await fetch(`${base}/api/admin/billing.xlsx?client=${vfsId}&from=${today}&to=${today}`, { headers: { Authorization: `Bearer ${admin}` } });
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(Buffer.from(await xlsx.arrayBuffer()));
+  assert.deepEqual(wb.worksheets.map((w) => w.name), ['Summary', 'Circles', 'Receipts', 'About']);
+  assert.equal(wb.getWorksheet('Receipts').rowCount, 3);
+
+  // Deleting a circle sends its accounts back to the rules.
+  assert.equal((await C(`/${kol.id}`, undefined, 'DELETE')).status, 200);
+  assert.equal(await circleOf('V003'), 'South Bengal');
+  view = (await C('', undefined, 'GET')).body;
+  assert.deepEqual(view.circles.map((c) => c.name).sort(), ['South Bengal', 'Special']);
 });

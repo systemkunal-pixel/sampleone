@@ -249,18 +249,19 @@ export async function upsertLoan(conn, companyId, loan, importId = null) {
   const recCols = Object.values(RECOVERY_COLUMNS);
   return conn.query(
     `INSERT INTO loans (company_id, id, loan_no, branch, officer_code, product, principal, emi, disbursed_on, borrower, installments,
-       follow_up_date, created_at, updated_at, import_id, state, district, pincode, client_id, source_row, ${recCols.join(', ')})
-     VALUES (${Array(20 + recCols.length).fill('?').join(', ')})
+       follow_up_date, created_at, updated_at, import_id, state, district, pincode, client_id, source_row, circle_in_file, ${recCols.join(', ')})
+     VALUES (${Array(21 + recCols.length).fill('?').join(', ')})
      ON DUPLICATE KEY UPDATE loan_no = VALUES(loan_no), branch = VALUES(branch), officer_code = VALUES(officer_code),
        product = VALUES(product), principal = VALUES(principal), emi = VALUES(emi), disbursed_on = VALUES(disbursed_on),
        borrower = VALUES(borrower), installments = VALUES(installments), updated_at = VALUES(updated_at),
        import_id = VALUES(import_id), state = VALUES(state), district = VALUES(district), pincode = VALUES(pincode),
-       client_id = VALUES(client_id), source_row = VALUES(source_row), ${recCols.map((c) => `${c} = VALUES(${c})`).join(', ')}`,
+       client_id = VALUES(client_id), source_row = VALUES(source_row), circle_in_file = VALUES(circle_in_file),
+       ${recCols.map((c) => `${c} = VALUES(${c})`).join(', ')}`,
     [
       companyId, loan.id, loan.loanNo, loan.branch ?? '', loan.officerCode || null, loan.product, loan.principal, loan.emi,
       loan.disbursedOn, JSON.stringify(loan.borrower), JSON.stringify(loan.installments), loan.followUpDate || null,
       now(), now(), importId, loan.state || null, loan.district || null, loan.pincode || null,
-      loan.clientId || null, loan.sourceRow ? JSON.stringify(loan.sourceRow) : null,
+      loan.clientId || null, loan.sourceRow ? JSON.stringify(loan.sourceRow) : null, loan.circleInFile || null,
       ...Object.keys(RECOVERY_COLUMNS).map((k) => rec[k] ?? null),
     ]
   );

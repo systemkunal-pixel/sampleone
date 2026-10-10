@@ -44,6 +44,7 @@ export const LOAN_COLUMNS = {
   iOdue: ['i odue', 'interest overdue', 'overdue interest'],
   oOdue: ['o odue', 'other overdue', 'charges overdue', 'other charges'],
   npaDate: ['npa dt', 'npa date', 'date of npa'],
+  circle: ['circle', 'circle name', 'billing circle'],
 };
 const MAX_SOURCE_COLUMNS = 80;
 export const INSTALLMENT_COLUMNS = {
@@ -471,6 +472,7 @@ function normaliseRecord(rec, instByLoan, opts = {}) {
       ...(recovery ? { source: 'recovery' } : {}),
       id, loanNo, branch, ...(officerCode !== undefined ? { officerCode } : {}), product: text(v.product, 60) || 'Loan', principal, emi, disbursedOn,
       state: text(v.state, 60) || null, district: text(v.district, 100) || null, pincode,
+      ...(text(v.circle ?? rec.structured?.circleInFile, 100) ? { circleInFile: text(v.circle ?? rec.structured?.circleInFile, 100) } : {}),
       ...(opts.client ? { clientId: opts.client.id } : {}),
       ...(() => {
         const r = parseRecovery(rec.structured ? rec.structured.recovery || {} : v);
