@@ -74,19 +74,19 @@ powershell -ExecutionPolicy Bypass -File C:\src\sampleone\scripts\install.ps1 -D
    It asks for the database password without showing it.
 
 The installer then:
-- installs Node.js if it's missing, and copies the app to `C:\LoanDesk`;
+- installs Node.js if it's missing, and copies the app to `C:\websites\loandesk\app`;
 - writes `.env`, checks the database connection, and creates the tables;
-- creates the BRMC admin and the overlord account, saving their passwords in `C:\LoanDesk\credentials.txt`;
+- creates the BRMC admin and the overlord account, saving their passwords in `C:\websites\loandesk\app\credentials.txt`;
 - runs LoanDesk (through the updater agent) as a start-up task on `127.0.0.1:8080`;
 - serves HTTPS with IIS (see below) when IIS is installed. Otherwise it downloads Caddy 2.8.4, checks it against its published checksum, runs it as a second start-up task (Caddy gets and renews the Let's Encrypt certificate), and opens ports 80 and 443 in Windows Firewall.
 
 **Updating:** run `git pull`, then the same command again. You can leave out `-DbHost` and the password, which are read from `.env`. The database, accounts, signing key and data are kept.
 
-**Updating from the overlord console:** put `UPDATE_PUBLIC_KEY` in `C:\LoanDesk\.env` once, then use **Update & diagnostics**. Database backups before schema changes need `mariadb-dump.exe` on the server. If MariaDB runs on another machine, install the MariaDB client tools on the LoanDesk server.
+**Updating from the overlord console:** put `UPDATE_PUBLIC_KEY` in `C:\websites\loandesk\app\.env` once, then use **Update & diagnostics**. Database backups before schema changes need `mariadb-dump.exe` on the server. If MariaDB runs on another machine, install the MariaDB client tools on the LoanDesk server.
 
 **When IIS already uses ports 80 and 443**, the installer uses IIS automatically (`-Web IIS`):
 - installs Microsoft's URL Rewrite and Application Request Routing modules if they're missing, after checking Microsoft's signature;
-- adds an IIS site **LoanDesk** with its own app pool, bound to the domain, which redirects HTTP to HTTPS and forwards everything to LoanDesk on `127.0.0.1`. Your other IIS sites are not changed;
+- uses the IIS site **loandesk** (or creates it) bound to the domain, pointing it at `C:\websites\loandesk\site` (only a `web.config`, so IIS can never serve the program's own files), which redirects HTTP to HTTPS and forwards everything to LoanDesk on `127.0.0.1`. Your other IIS sites are not changed;
 - gets the certificate with the win-acme already on the server, found through its renewal task or given with `-WacsPath`, so it renews with your other certificates.
 
 **Other options:**
@@ -94,7 +94,7 @@ The installer then:
 - `-Web None` (or `-NoHttps`) is for when Cloudflare or another proxy handles HTTPS. Point it at `http://127.0.0.1:<port>`.
 - `-Domain`, `-AppDir`, `-Port`, `-DbName`, `-DbUser`.
 
-**Logs:** `C:\LoanDesk\logs\server.log` (LoanDesk) and `https.log` (Caddy).
+**Logs:** `C:\websites\loandesk\app\logs\server.log` (LoanDesk) and `https.log` (Caddy, when used).
 
 ## What each role can do
 

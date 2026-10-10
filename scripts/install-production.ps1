@@ -16,9 +16,9 @@
 
   It then:
     - installs Node.js LTS (winget) if missing
-    - copies the app to C:\LoanDesk (keeps .env, logs, backups and data on re-runs)
+    - copies the app to C:\websites\loandesk\app (keeps .env, logs, backups and data on re-runs)
     - writes .env with the database details, checks the connection and creates/upgrades the tables
-    - creates the first admin (company BRMC) and the overlord account, saved to C:\LoanDesk\credentials.txt
+    - creates the first admin (company BRMC) and the overlord account, saved to C:\websites\loandesk\app\credentials.txt
     - runs LoanDesk (the updater agent) as a start-up task listening only on 127.0.0.1
     - downloads Caddy 2.8.4 (checksum verified), configures HTTPS for the domain, runs it as a start-up task
       and opens ports 80 and 443 in Windows Firewall
@@ -28,7 +28,10 @@
     powershell -ExecutionPolicy Bypass -File .\scripts\install-production.ps1 -DbHost 26.182.8.0 -DbPort 3321 -OverlordEmail you@example.com
 
 .PARAMETER Domain         Public name (default loandesk.datahaat.com).
-.PARAMETER AppDir         Install folder (default C:\LoanDesk).
+.PARAMETER AppDir         Install folder for the program, .env, logs and backups (default C:\websites\loandesk\app).
+.PARAMETER SiteDir        IIS site folder; holds only web.config (default C:\websites\loandesk\site). Kept apart from
+                          AppDir so IIS can never serve the program's own files.
+.PARAMETER SiteName       IIS site name (default loandesk; an existing site of that name is reused with its bindings).
 .PARAMETER Port           Local port LoanDesk listens on behind Caddy (default 8080).
 .PARAMETER DbHost         MariaDB server address (required on first install).
 .PARAMETER DbPort         MariaDB port (default 3306).
@@ -38,7 +41,7 @@
 .PARAMETER OverlordEmail  Sign-in email of the first overlord (required on first install).
 .PARAMETER AcmeEmail      Email Let's Encrypt uses for certificate notices (default: OverlordEmail).
 .PARAMETER Web            How HTTPS is served: Auto (default: IIS if it is installed, else Caddy), IIS, Caddy, or None.
-                          IIS: adds a 'LoanDesk' site for the domain that forwards to LoanDesk (URL Rewrite + ARR, installed
+                          IIS: uses (or adds) the IIS site -SiteName for the domain that forwards to LoanDesk (URL Rewrite + ARR, installed
                           from Microsoft if missing) and gets the certificate with win-acme, which renews it.
 .PARAMETER WacsPath       Path to wacs.exe if win-acme is not found automatically.
 .PARAMETER NoHttps        Same as -Web None: LoanDesk listens on -Port only (HTTPS handled elsewhere).
@@ -48,7 +51,9 @@
 [CmdletBinding()]
 param(
   [string]$Domain = 'loandesk.datahaat.com',
-  [string]$AppDir = 'C:\LoanDesk',
+  [string]$AppDir = 'C:\websites\loandesk\app',
+  [string]$SiteDir = 'C:\websites\loandesk\site',
+  [string]$SiteName = 'loandesk',
   [int]$Port = 8080,
   [string]$DbHost,
   [int]$DbPort = 3306,
@@ -379,7 +384,10 @@ if ($Web -eq 'IIS') {
   Set-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter 'system.webServer/proxy' -Name 'timeout' -Value '00:02:00'
 
   # The site: an empty folder whose web.config redirects HTTP to HTTPS and forwards everything to LoanDesk.
-  $siteDir = Join-Path $AppDir 'iis'
+  $siteDir = $SiteDir
+  if ([IO.Path]::GetFullPath($AppDir).TrimEnd('\').StartsWith([IO.Path]::GetFullPath($siteDir).TrimEnd('\') + '\', 'OrdinalIgnoreCase')) {
+    Fail "-AppDir must not be inside the IIS site folder ($siteDir): IIS could then serve the program's own files."
+  }
   New-Item -ItemType Directory -Force -Path $siteDir | Out-Null
   Write-TextFile (Join-Path $siteDir 'web.config') @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -418,22 +426,21 @@ if ($Web -eq 'IIS') {
   </system.webServer>
 </configuration>
 "@
-  $pool = 'LoanDesk'
-  if (-not (Test-Path "IIS:\AppPools\$pool")) {
-    New-WebAppPool -Name $pool | Out-Null
-    Set-ItemProperty "IIS:\AppPools\$pool" -Name managedRuntimeVersion -Value ''
-  }
-  $site = Get-Website | Where-Object { $_.Name -eq 'LoanDesk' }
-  $taken = Get-WebBinding | Where-Object { $_.bindingInformation -match ":$([regex]::Escape($Domain))$" -and $_.ItemXPath -notmatch "@name='LoanDesk'" }
+  $site = Get-Website | Where-Object { $_.Name -eq $SiteName }
+  # Reuse the site's own app pool if it has one; it only needs to run the rewrite rules (no .NET code).
+  $pool = if ($site) { $site.applicationPool } else { $SiteName }
+  if (-not (Test-Path "IIS:\AppPools\$pool")) { New-WebAppPool -Name $pool | Out-Null }
+  Set-ItemProperty "IIS:\AppPools\$pool" -Name managedRuntimeVersion -Value ''
+  $taken = Get-WebBinding | Where-Object { $_.bindingInformation -match ":$([regex]::Escape($Domain))$" -and $_.ItemXPath -notmatch "@name='$([regex]::Escape($SiteName))'" }
   if ($taken) { Fail "Another IIS site already has a binding for $Domain. Remove it in IIS Manager, then re-run." }
   if (-not $site) {
-    $site = New-Website -Name 'LoanDesk' -PhysicalPath $siteDir -ApplicationPool $pool -HostHeader $Domain -Port 80 -IPAddress '*'
+    $site = New-Website -Name $SiteName -PhysicalPath $siteDir -ApplicationPool $pool -HostHeader $Domain -Port 80 -IPAddress '*'
   } else {
-    Set-ItemProperty 'IIS:\Sites\LoanDesk' -Name physicalPath -Value $siteDir
-    Set-ItemProperty 'IIS:\Sites\LoanDesk' -Name applicationPool -Value $pool
-    if (-not (Get-WebBinding -Name 'LoanDesk' -Protocol http -HostHeader $Domain)) { New-WebBinding -Name 'LoanDesk' -Protocol http -Port 80 -HostHeader $Domain }
+    Write-Host "Using the existing IIS site '$SiteName' (its bindings and certificate are kept); its folder becomes $siteDir."
+    Set-ItemProperty "IIS:\Sites\$SiteName" -Name physicalPath -Value $siteDir
+    if (-not (Get-WebBinding -Name $SiteName -Protocol http -HostHeader $Domain)) { New-WebBinding -Name $SiteName -Protocol http -Port 80 -HostHeader $Domain }
   }
-  Start-Website -Name 'LoanDesk' -ErrorAction SilentlyContinue
+  Start-Website -Name $SiteName -ErrorAction SilentlyContinue
   try {
     $r = Invoke-WebRequest "http://127.0.0.1/api/health" -Headers @{ Host = $Domain } -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 10 -ErrorAction Stop
     Write-Host "IIS forwards to LoanDesk (HTTP $($r.StatusCode))."
@@ -450,27 +457,27 @@ if ($Web -eq 'IIS') {
   if (-not $WacsPath) {
     $WacsPath = @('C:\Program Files\win-acme\wacs.exe', 'C:\win-acme\wacs.exe', 'C:\tools\win-acme\wacs.exe') | Where-Object { Test-Path $_ } | Select-Object -First 1
   }
-  $hasHttps = Get-WebBinding -Name 'LoanDesk' -Protocol https -HostHeader $Domain
+  $hasHttps = Get-WebBinding -Name $SiteName -Protocol https -HostHeader $Domain
   if ($hasHttps) {
     Write-Host "IIS already has an HTTPS binding for $Domain; win-acme keeps renewing it."
   } elseif (-not $WacsPath) {
     Note ("win-acme (wacs.exe) was not found. Re-run with -WacsPath 'C:\path\to\wacs.exe', or open win-acme, choose " +
-      "'Create certificate (default settings)' and pick the site 'LoanDesk' ($Domain).")
+      "'Create certificate (default settings)' and pick the site '$SiteName' ($Domain).")
   } else {
     if (-not $AcmeEmail) { $AcmeEmail = $OverlordEmail }
     $wacsArgs = @('--source', 'iis', '--siteid', "$($site.Id)", '--host', $Domain, '--installation', 'iis', '--accepttos')
     if ($AcmeEmail) { $wacsArgs += @('--emailaddress', $AcmeEmail) }
     Write-Host "Requesting the certificate with $WacsPath ..."
     & $WacsPath @wacsArgs
-    if ($LASTEXITCODE -ne 0 -or -not (Get-WebBinding -Name 'LoanDesk' -Protocol https -HostHeader $Domain)) {
+    if ($LASTEXITCODE -ne 0 -or -not (Get-WebBinding -Name $SiteName -Protocol https -HostHeader $Domain)) {
       Note ("win-acme did not finish (see its output above). Open win-acme, choose 'Create certificate (default settings)' " +
-        "and pick the site 'LoanDesk' ($Domain); it then renews it with your other certificates.")
+        "and pick the site '$SiteName' ($Domain); it then renews it with your other certificates.")
     }
   }
   try {
     $h2 = Invoke-RestMethod "https://$Domain/api/health" -TimeoutSec 10
     if ($h2.ok) { Write-Host "https://$Domain is live." -ForegroundColor Green }
-  } catch { Note "https://$Domain did not answer yet ($($_.Exception.Message)). Check DNS and the HTTPS binding of the LoanDesk site in IIS." }
+  } catch { Note "https://$Domain did not answer yet ($($_.Exception.Message)). Check DNS and the HTTPS binding of the '$SiteName' site in IIS." }
 }
 
 # ------------------------------------------------------------------ summary
