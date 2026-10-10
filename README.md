@@ -55,6 +55,42 @@ powershell -ExecutionPolicy Bypass -File C:\src\sampleone\scripts\install.ps1 -D
 - **Forgotten root password:** add `-ResetRootPassword`. The MariaDB service stops for about a minute while a new root password is set (saved in `credentials.txt`); databases and data are kept.
 - **Several servers installed:** pick one with `-DbPort 3307`. The script refuses to continue if another program (e.g. XAMPP's MySQL) holds the chosen port.
 
+## Production install (Windows Server, existing MariaDB, HTTPS)
+
+`scripts/install-production.ps1` installs LoanDesk on a Windows Server that uses a MariaDB you already run, and serves it on HTTPS at `loandesk.datahaat.com`.
+
+1. **On the MariaDB server**, create the database and a user for LoanDesk only. If you can, replace `'%'` with the LoanDesk server's address:
+   ```sql
+   CREATE DATABASE loandesk CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   CREATE USER 'loandesk'@'%' IDENTIFIED BY 'a-strong-password';
+   GRANT ALL PRIVILEGES ON loandesk.* TO 'loandesk'@'%';
+   ```
+2. **Make sure the domain is reachable:** `loandesk.datahaat.com` points to the server, and ports 80 and 443 are open to the internet. Nothing else, such as IIS, may be using ports 80 and 443.
+3. **On the server**, in PowerShell as Administrator:
+   ```powershell
+   git clone -b claude/eager-ride-t1oaiq https://github.com/systemkunal-pixel/sampleone.git C:\src\loandesk
+   powershell -ExecutionPolicy Bypass -File C:\src\loandesk\scripts\install-production.ps1 -DbHost <mariadb-host> -DbPort <port> -OverlordEmail you@example.com
+   ```
+   It asks for the database password without showing it.
+
+The installer then:
+- installs Node.js if it's missing, and copies the app to `C:\LoanDesk`;
+- writes `.env`, checks the database connection, and creates the tables;
+- creates the BRMC admin and the overlord account, saving their passwords in `C:\LoanDesk\credentials.txt`;
+- runs LoanDesk (through the updater agent) as a start-up task on `127.0.0.1:8080`;
+- downloads Caddy 2.8.4, checks it against its published checksum, and runs it as a second start-up task. Caddy gets the Let's Encrypt certificate and renews it automatically;
+- opens ports 80 and 443 in Windows Firewall.
+
+**Updating:** run `git pull`, then the same command again. You can leave out `-DbHost` and the password, which are read from `.env`. The database, accounts, signing key and data are kept.
+
+**Updating from the overlord console:** put `UPDATE_PUBLIC_KEY` in `C:\LoanDesk\.env` once, then use **Update & diagnostics**. Database backups before schema changes need `mariadb-dump.exe` on the server. If MariaDB runs on another machine, install the MariaDB client tools on the LoanDesk server.
+
+**Other options:**
+- `-NoHttps`: if IIS, Cloudflare or another proxy already handles HTTPS. Point it at `http://127.0.0.1:8080`.
+- `-Domain`, `-AppDir`, `-Port`, `-DbName`, `-DbUser`.
+
+**Logs:** `C:\LoanDesk\logs\server.log` (LoanDesk) and `https.log` (Caddy).
+
 ## What each role can do
 
 **Field officer** (phone, 4–8 digit PIN)

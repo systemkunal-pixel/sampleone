@@ -30,7 +30,8 @@ const USAGE = `Usage: npm run admin -- <command> [options]
                                             and digits); the authenticator app is set up at first sign-in
   overlord-password --email you@example.com --password "…"   reset an overlord password
   overlord-reset-2fa --email you@example.com                 lost phone: set up the authenticator again
-  list-overlords`;
+  list-overlords
+  status                                    counts for scripts: BRMC admins, overlords, companies (JSON)`;
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -139,6 +140,16 @@ async function main() {
       case 'migrate':
         console.log('Schema is up to date.');
         break;
+      case 'status': {
+        // Machine-readable counts for the installers.
+        const [[{ admins }], [{ overlords }], [{ companies }]] = await Promise.all([
+          pool.query("SELECT COUNT(*) AS admins FROM users u JOIN companies c ON c.id = u.company_id WHERE c.code = 'BRMC' AND u.role = 'admin'"),
+          pool.query('SELECT COUNT(*) AS overlords FROM overlords'),
+          pool.query('SELECT COUNT(*) AS companies FROM companies'),
+        ]);
+        console.log(JSON.stringify({ brmcAdmins: admins, overlords, companies }));
+        break;
+      }
       case 'list-companies':
         console.table(await pool.query('SELECT code, name, plan, status FROM companies ORDER BY id'));
         break;
