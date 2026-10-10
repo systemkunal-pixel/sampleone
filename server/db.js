@@ -150,6 +150,7 @@ export function loanFromRow(r) {
     borrower: json(r.borrower),
     installments: json(r.installments),
     followUpDate: r.follow_up_date,
+    ...(r.pincode || r.district || r.state ? { area: { state: r.state, district: r.district, pincode: r.pincode } } : {}),
     payments: [],
     visits: [],
   };
@@ -184,16 +185,16 @@ export async function upsertLoan(conn, companyId, loan, importId = null) {
   if (owner && owner.company_id !== companyId) throw new Error(`Loan id ${loan.id} belongs to another company.`);
   return conn.query(
     `INSERT INTO loans (company_id, id, loan_no, branch, officer_code, product, principal, emi, disbursed_on, borrower, installments,
-       follow_up_date, created_at, updated_at, import_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       follow_up_date, created_at, updated_at, import_id, state, district, pincode)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE loan_no = VALUES(loan_no), branch = VALUES(branch), officer_code = VALUES(officer_code),
        product = VALUES(product), principal = VALUES(principal), emi = VALUES(emi), disbursed_on = VALUES(disbursed_on),
        borrower = VALUES(borrower), installments = VALUES(installments), updated_at = VALUES(updated_at),
-       import_id = VALUES(import_id)`,
+       import_id = VALUES(import_id), state = VALUES(state), district = VALUES(district), pincode = VALUES(pincode)`,
     [
       companyId, loan.id, loan.loanNo, loan.branch, loan.officerCode || null, loan.product, loan.principal, loan.emi,
       loan.disbursedOn, JSON.stringify(loan.borrower), JSON.stringify(loan.installments), loan.followUpDate || null,
-      now(), now(), importId,
+      now(), now(), importId, loan.state || null, loan.district || null, loan.pincode || null,
     ]
   );
 }

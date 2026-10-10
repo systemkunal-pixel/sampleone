@@ -583,3 +583,15 @@ body[data-off~="bank_deposits"] [data-needs~="bank_deposits"] { display: none !i
   .shell.with-banner { padding-bottom: 110px; }
   .shell.with-banner .sidebar { bottom: 88px; }
 }
+
+/* Areas: state → district → pincode */
+.card.area { margin-bottom: 12px; overflow: hidden; }
+.area-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; cursor: pointer; list-style: none; }
+.area-head::-webkit-details-marker { display: none; }
+.area-head:hover { background: var(--hover); }
+.area-caret { transition: transform .15s; flex: none; }
+details[open] > .area-head > .area-caret { transform: rotate(90deg); }
+.area-fig { color: var(--muted); font-size: .86rem; font-variant-numeric: tabular-nums; }
+.area-district { border-top: 1px solid var(--border); }
+.area-district > .area-head { padding-left: 34px; }
+.area-district .table-wrap { border-top: 1px solid var(--border); }

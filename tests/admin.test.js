@@ -44,7 +44,7 @@ before(async () => {
     host: env.TEST_DB_HOST || '127.0.0.1', port: Number(env.TEST_DB_PORT) || 3306,
     user: env.TEST_DB_USER, password: env.TEST_DB_PASSWORD || '', database: env.TEST_DB_NAME, connectionLimit: 5,
   });
-  for (const t of ['password_resets', 'mail_log', 'mail_settings', 'imports', 'audit_log', 'deposit_slips', 'visits', 'payments', 'sessions', 'loans', 'users', 'companies',
+  for (const t of ['area_agents', 'password_resets', 'mail_log', 'mail_settings', 'imports', 'audit_log', 'deposit_slips', 'visits', 'payments', 'sessions', 'loans', 'users', 'companies',
     'overlord_sessions', 'overlords', 'support_sessions', 'overlord_audit', 'plans', 'plan_features', 'company_feature_overrides',
     'platform_updates', 'platform_update_events', 'platform_state', 'leads']) {
     await pool.query(`DROP TABLE IF EXISTS ${t}`);
@@ -178,4 +178,70 @@ test('summary and audit trail', opts, async () => {
   const audit = (await call('/api/admin/audit?user=ADMIN')).body;
   const actions = new Set(audit.rows.map((r) => r.action));
   for (const a of ['user_created', 'user_deactivated', 'pin_reset', 'loans_imported', 'loans_assigned']) assert.ok(actions.has(a), a);
+});
+
+// A lender's recovery list (VFS "Borrower Details" layout), made-up data.
+async function recoveryList(rows) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Borrower Details');
+  ws.addRow([]);
+  ws.addRow([null, 'PI_NAME', 'CUST_NAME', 'ACCT_NO', 'Asset Class', 'Address', 'PIN Code', 'State', 'District', 'Mob No.', 'OS_AMT', 'INT_RATE', 'DUE_SINCE', 'T_ODUE']);
+  for (const [acct, pin, district, due] of rows) {
+    ws.addRow([null, 'VFS CAPITAL LIMITED', `BORROWER ${acct}`, acct, 'NPA', 'NEAR SCHOOL', pin, 'WEST BENGAL', district, '9800012345', due, 18, 45570, due]);
+  }
+  return Buffer.from(await wb.xlsx.writeBuffer()).toString('base64');
+}
+const importAll = async (base64, fileName = 'vfs.xlsx') => {
+  const pre = (await call('/api/admin/import/preview', { method: 'POST', body: { fileName, base64 } })).body;
+  const done = (await call('/api/admin/import/commit', { method: 'POST', body: { fileName, totalRows: pre.totalRows, loans: pre.rows.map((r) => r.loan) } })).body;
+  return { pre, done };
+};
+const officerOf = async (loanNo) => (await pool.query('SELECT officer_code FROM loans WHERE loan_no = ?', [loanNo]))[0]?.officer_code ?? null;
+
+test('areas: a recovery list by pincode, agents deputed per pincode, new accounts follow the agent', opts, async () => {
+  for (const [code, name] of [['AG1', 'Agent One'], ['AG2', 'Agent Two']]) {
+    assert.equal((await call('/api/admin/users', { method: 'POST', body: { code, name, role: 'officer', branch: 'VFS', pin: '2468' } })).status, 200);
+  }
+  const first = await importAll(await recoveryList([['V001', 711302, 'HOWRAH', 26530], ['V002', 711302, 'HOWRAH', 5000], ['V003', 721429, 'EAST MEDINIPORE', 9000]]));
+  assert.deepEqual(first.pre.missingHeaders, []);
+  assert.deepEqual([first.done.created, first.done.updated], [3, 0]);
+
+  let areas = (await call('/api/admin/areas')).body;
+  assert.equal(areas.branch, 'VFS');
+  const wb = areas.states.find((s) => s.state === 'WEST BENGAL');
+  assert.deepEqual(wb.districts.map((d) => [d.district, d.accounts, d.unassigned]), [['HOWRAH', 2, 2], ['EAST MEDINIPORE', 1, 1]]);
+  assert.equal(wb.overdue, 26530 + 5000 + 9000);
+
+  // Depute AG1 to 711302: both accounts there are assigned.
+  assert.equal((await call('/api/admin/areas/agent', { method: 'POST', body: { branch: 'VFS', pincodes: ['711302'], officerCode: 'FO27' } })).status, 400, 'agent must belong to the branch');
+  const dep = (await call('/api/admin/areas/agent', { method: 'POST', body: { branch: 'VFS', pincodes: ['711302'], officerCode: 'AG1' } })).body;
+  assert.equal(dep.changed, 2);
+  areas = (await call('/api/admin/areas')).body;
+  const pin = areas.states[0].districts.find((d) => d.district === 'HOWRAH').pincodes[0];
+  assert.deepEqual([pin.pincode, pin.agent.code, pin.unassigned], ['711302', 'AG1', 0]);
+
+  // V003 is moved by hand to AG2; next month's file has V001–V003 again plus a new V004 in 711302.
+  await call('/api/admin/loans/assign', { method: 'POST', body: { loanIds: [first.pre.rows[2].loan.id], officerCode: 'AG2' } });
+  const next = await importAll(await recoveryList([
+    ['V001', 711302, 'HOWRAH', 20000], ['V002', 711302, 'HOWRAH', 5000], ['V003', 721429, 'EAST MEDINIPORE', 9000], ['V004', 711302, 'HOWRAH', 7000],
+  ]), 'vfs-next.xlsx');
+  assert.deepEqual([next.done.created, next.done.updated], [1, 3]);
+  const v4 = next.pre.rows.find((r) => r.loan.loanNo === 'V004');
+  assert.ok(v4.warnings.some((w) => /agent for pincode 711302/.test(w)));
+  assert.deepEqual(await Promise.all(['V001', 'V002', 'V003', 'V004'].map(officerOf)), ['AG1', 'AG1', 'AG2', 'AG1'], 'officers kept; the new account follows the agent');
+
+  // Loans can be listed by pincode; the agent's phone gets the accounts with their area.
+  const list = (await call('/api/admin/loans?pincode=721429')).body;
+  assert.deepEqual(list.rows.map((r) => r.loanNo), ['V003']);
+  const phone = (await call('/api/bootstrap', { token: await login('AG1', '2468') })).body;
+  assert.deepEqual(phone.loans.map((l) => l.loanNo).sort(), ['V001', 'V002', 'V004']);
+  assert.deepEqual(phone.loans[0].area, { state: 'WEST BENGAL', district: 'HOWRAH', pincode: '711302' });
+  assert.equal(phone.loans.find((l) => l.loanNo === 'V001').installments[0].amount, 20000, 'the new file updates the amount due');
+
+  // Removing the agent but keeping the assignments.
+  assert.equal((await call('/api/admin/areas/agent', { method: 'POST', body: { branch: 'VFS', pincodes: ['711302'], officerCode: null, mode: 'unassigned' } })).body.changed, 0);
+  assert.equal(await officerOf('V001'), 'AG1');
+  assert.equal((await pool.query('SELECT COUNT(*) AS n FROM area_agents')).at(0).n, 0);
+  const [entry] = await pool.query("SELECT action FROM audit_log WHERE action LIKE 'area_agent%' ORDER BY id DESC LIMIT 1");
+  assert.equal(entry.action, 'area_agent_removed');
 });

@@ -48,6 +48,8 @@ function filterBar(q, branches) {
       <select class="select" name="bucket" aria-label="${esc(t('Days past due'))}">${opt('', t('Any DPD'), q.get('bucket') || '')}${BUCKETS.map(([k, l]) => opt(k, t(l), q.get('bucket') || '')).join('')}${opt('closed', t('Closed'), q.get('bucket') || '')}</select>
       <select class="select" name="sort" aria-label="${esc(t('Sort by'))}">${SORTS.map(([k, l]) => opt(k, t('Sort: {label}', { label: t(l) }), q.get('sort') || 'dpd')).join('')}</select>
       <input type="hidden" name="dir" value="${esc(q.get('dir') || 'desc')}">
+      ${q.get('pincode') ? `<input type="hidden" name="pincode" value="${esc(q.get('pincode'))}">
+        <button type="button" class="btn sm" data-act="clear-pincode" title="${esc(t('Show all pincodes'))}">${icon('map')} ${t('Pincode {pin}', { pin: esc(q.get('pincode')) })} ${icon('x')}</button>` : ''}
     </form>`;
 }
 
@@ -88,7 +90,7 @@ function table(data, q) {
             <tr class="clickable ${selected.has(r.id) ? 'selected' : ''}" data-id="${esc(r.id)}">
               <td class="check"><input type="checkbox" data-act="row" ${selected.has(r.id) ? 'checked' : ''} aria-label="${esc(t('Select {loan}', { loan: r.loanNo }))}"></td>
               <td class="primary" data-label="${esc(t('Loan'))}"><div class="cell-main">${esc(r.loanNo)}</div><div class="cell-sub">${esc(r.product)}</div></td>
-              <td data-label="${esc(t('Borrower'))}"><div>${esc(r.borrower.name)}</div><div class="cell-sub">${esc(r.borrower.phone)}${r.borrower.village ? ` · ${esc(r.borrower.village)}` : ''}</div></td>
+              <td data-label="${esc(t('Borrower'))}"><div>${esc(r.borrower.name)}</div><div class="cell-sub">${esc(r.borrower.phone)}${r.borrower.village ? ` · ${esc(r.borrower.village)}` : ''}${r.pincode ? ` · ${esc(r.district || '')} ${esc(r.pincode)}` : ''}</div></td>
               <td data-label="${esc(t('Branch'))}">${esc(r.branch)}</td>
               <td data-label="${esc(t('Officer'))}">${r.officerCode ? `${esc(r.officerName || r.officerCode)} <span class="cell-sub">${esc(r.officerCode)}</span>` : `<span class="badge warn">${t('Unassigned')}</span>`}</td>
               <td class="right num" data-label="${esc(t('Outstanding'))}">${inr(r.outstanding)}</td>
@@ -151,7 +153,7 @@ async function openLoan(id) {
           <dt>${t('Name')}</dt><dd>${esc(b.name)}</dd>
           <dt>${t('Phone')}</dt><dd><a href="tel:${esc(b.phone)}">${esc(b.phone)}</a></dd>
           ${b.business ? `<dt>${t('Business')}</dt><dd>${esc(b.business)}</dd>` : ''}
-          <dt>${t('Address')}</dt><dd>${esc([b.address, b.village].filter(Boolean).join(', ') || '—')}${b.lat != null ? ` · <a href="https://www.google.com/maps?q=${b.lat},${b.lng}" target="_blank" rel="noopener">${t('map')}</a>` : ''}</dd>
+          <dt>${t('Address')}</dt><dd>${esc([b.address, b.village, loan.area?.district, loan.area?.state, loan.area?.pincode].filter(Boolean).join(', ') || '—')}${b.lat != null ? ` · <a href="https://www.google.com/maps?q=${b.lat},${b.lng}" target="_blank" rel="noopener">${t('map')}</a>` : ''}</dd>
           ${b.guarantor ? `<dt>${t('Guarantor')}</dt><dd>${esc(b.guarantor.name || '—')}${b.guarantor.phone ? ` · ${esc(b.guarantor.phone)}` : ''}</dd>` : ''}
         </dl>
       </section>
@@ -215,7 +217,7 @@ async function openLoan(id) {
 // ---------- page ----------
 
 export async function render(el, q, alive) {
-  const key = ['q', 'branch', 'officer', 'bucket'].map((k) => q.get(k) || '').join('|');
+  const key = ['q', 'branch', 'officer', 'bucket', 'pincode'].map((k) => q.get(k) || '').join('|');
   if (key !== lastKey) selected = new Set(); // a different result set: drop the selection
   lastKey = key;
   const params = new URLSearchParams(q);
@@ -289,6 +291,12 @@ export async function render(el, q, alive) {
       const p = new URLSearchParams(q);
       p.delete('page');
       return download(`loans/export?${p}`, 'loans.csv').catch((ex) => toast(tr(ex.message), 'bad'));
+    }
+    if (act === 'clear-pincode') {
+      const rest = Object.fromEntries(q);
+      delete rest.pincode;
+      delete rest.page;
+      return setQuery(rest);
     }
     if (act === 'select-all') {
       data.ids.forEach((id) => selected.add(id));

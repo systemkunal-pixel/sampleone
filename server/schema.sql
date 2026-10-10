@@ -366,3 +366,21 @@ CREATE TABLE IF NOT EXISTS password_resets (
 -- older rows (NULL) count as told.
 ALTER TABLE platform_updates ADD COLUMN IF NOT EXISTS mailed TINYINT(1) NULL;
 UPDATE platform_updates SET mailed = 1 WHERE mailed IS NULL
+;
+
+-- v7: where each account is (for recovery lists that come by pincode), and the agent deputed to each
+-- pincode. New accounts in a pincode with a deputed agent are assigned to that agent on import.
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS state VARCHAR(60) NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS district VARCHAR(100) NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS pincode CHAR(6) NULL;
+ALTER TABLE loans ADD KEY IF NOT EXISTS ix_loans_company_pincode (company_id, pincode);
+
+CREATE TABLE IF NOT EXISTS area_agents (
+  company_id    INT UNSIGNED NOT NULL,
+  branch        VARCHAR(100) NOT NULL,
+  pincode       CHAR(6)      NOT NULL,
+  officer_code  VARCHAR(12)  NOT NULL,
+  updated_by    VARCHAR(12)  NOT NULL,
+  updated_at    DATETIME     NOT NULL,
+  PRIMARY KEY (company_id, branch, pincode)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

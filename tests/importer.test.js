@@ -92,6 +92,44 @@ test('JSON accepts the API loan shape and flat rows', async () => {
   assert.equal(valid[1].loan.installments[0].dueDate, '2026-02-01');
 });
 
+// The layout of a lender's recovery list (e.g. VFS "Borrower Details"): a blank first row and column,
+// one overdue amount due since a date, and the account's state, district and pincode. Made-up data.
+async function recoveryWorkbook(rows) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Borrower Details');
+  ws.addRow([]);
+  ws.addRow([null, 'PI_NAME', 'CUST_NAME', 'CUST_CD', 'ACCT_NO', 'Asset Class', 'Address', 'PIN Code', 'State', 'District', 'Mob No.',
+    'OS_AMT', 'INT_RATE', 'DUE_SINCE', 'OD_DAYS', 'P_ODUE', 'I_ODUE', 'O_ODUE', 'T_ODUE', 'NPA_DT']);
+  for (const r of rows) {
+    ws.addRow([null, 'VFS CAPITAL LIMITED', r.name, 1000001, r.acct, r.cls || 'NPA', r.address || 'WARD 4 NEAR SCHOOL', r.pin, r.state || 'WEST BENGAL',
+      r.district, r.phone, r.os ?? 20000, 18, r.since ?? 45570, 300, 18000, 2000, 1000, r.due ?? 21000, new Date(Date.UTC(2024, 9, 3))]);
+  }
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+test('a recovery list imports as one overdue amount per account, with state, district and pincode', async () => {
+  const buf = await recoveryWorkbook([
+    { acct: 'D000001A', name: 'TEST BORROWER ONE', pin: 711302, district: 'HOWRAH', phone: 9800000001, due: 26530 },
+    { acct: 'D000002B', name: 'TEST BORROWER TWO', pin: '721429', district: 'EAST MEDINIPORE', phone: 1234567890 },
+    { acct: 'D000003C', name: 'TEST BORROWER THREE', pin: 711302, district: 'HOWRAH', phone: 9800000003, os: 0, due: 5000, cls: 'sma1' },
+  ]);
+  const parsed = await readImportFile('VFS Borrower Details.xlsx', buf);
+  assert.deepEqual(parsed.missingHeaders, []);
+  const { valid, errors } = normalise(parsed);
+  assert.deepEqual(errors.map((e) => [e.loanNo, e.errors]), [['D000002B', ['Phone "1234567890" is not a valid 10-digit mobile number.']]]);
+  const [a, c] = valid.map((v) => v.loan);
+  assert.equal(a.branch, 'VFS');
+  assert.equal(a.product, 'VFS · NPA · 18%');
+  assert.equal(c.product, 'VFS · SMA1 · 18%');
+  assert.deepEqual(a.installments, [{ no: 1, dueDate: '2024-10-05', amount: 26530 }]);
+  assert.equal(a.emi, 26530);
+  assert.equal(a.principal, 20000);
+  assert.equal(c.principal, 5000, 'no outstanding given: the overdue amount stands in');
+  assert.deepEqual([a.state, a.district, a.pincode], ['WEST BENGAL', 'HOWRAH', '711302']);
+  assert.equal('officerCode' in a, false, 'no officer column: keep the current officer');
+  assert.equal(a.borrower.phone, '9800000001');
+});
+
 test('the downloadable template imports cleanly', async () => {
   const parsed = await readImportFile('template.xlsx', await buildTemplate());
   const { valid, errors } = normalise(parsed);

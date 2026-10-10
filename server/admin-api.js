@@ -34,10 +34,13 @@ function userRow(u) {
 }
 
 /** Loans with just enough payment data to compute dues, filtered in SQL. */
-export async function portfolio(pool, companyId, { branch, officer, q, loanIds } = {}) {
+export async function portfolio(pool, companyId, { branch, officer, q, loanIds, state, district, pincode } = {}) {
   const where = ['l.company_id = ?'];
   const args = [companyId];
   if (branch) where.push('l.branch = ?'), args.push(branch);
+  if (state) where.push('l.state = ?'), args.push(state);
+  if (district) where.push('l.district = ?'), args.push(district);
+  if (pincode) where.push('l.pincode = ?'), args.push(pincode);
   if (officer === '__none') where.push('l.officer_code IS NULL');
   else if (officer) where.push('l.officer_code = ?'), args.push(officer);
   if (q) {
@@ -49,7 +52,7 @@ export async function portfolio(pool, companyId, { branch, officer, q, loanIds }
   const sql = `WHERE ${where.join(' AND ')}`;
   const rows = await pool.query(
     `SELECT l.id, l.loan_no, l.branch, l.officer_code, l.product, l.principal, l.emi, l.disbursed_on, l.borrower,
-            l.installments, l.updated_at, u.name AS officer_name
+            l.installments, l.updated_at, l.state, l.district, l.pincode, u.name AS officer_name
      FROM loans l LEFT JOIN users u ON u.company_id = l.company_id AND u.code = l.officer_code ${sql}`, args);
   const pays = await pool.query(
     `SELECT p.loan_id, p.amount, p.verification FROM payments p JOIN loans l ON l.id = p.loan_id ${sql}`, args);
@@ -65,6 +68,7 @@ export async function portfolio(pool, companyId, { branch, officer, q, loanIds }
     return {
       id: r.id, loanNo: r.loan_no, branch: r.branch, officerCode: r.officer_code, officerName: r.officer_name,
       product: r.product, principal: r.principal, emi: r.emi, disbursedOn: r.disbursed_on, updatedAt: r.updated_at,
+      state: r.state, district: r.district, pincode: r.pincode,
       borrower: { name: borrower.name, phone: borrower.phone, village: borrower.village },
       outstanding: st.outstanding, overdue: st.overdue, dpd: st.dpd, bucket: st.closed ? 'closed' : st.bucket.key,
     };
@@ -291,6 +295,9 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     branch: str(query.get('branch')) || undefined,
     officer: str(query.get('officer')) || undefined,
     q: str(query.get('q')).slice(0, 60) || undefined,
+    state: str(query.get('state')) || undefined,
+    district: str(query.get('district')) || undefined,
+    pincode: str(query.get('pincode')) || undefined,
   });
 
   R('GET', '/loans', async ({ query, user }) => {
@@ -361,6 +368,93 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     const code = officerCode ? str(officerCode).toUpperCase() : null;
     const changed = await withTx(pool, (conn) => assign(conn, [...new Set(loanIds.map(String))], code, user));
     return { changed };
+  });
+
+  // ---------- areas: state → district → pincode, and the agent deputed to each pincode ----------
+
+  R('GET', '/areas', async ({ query, user }) => {
+    const branches = (await pool.query(
+      'SELECT branch, COUNT(*) AS n FROM loans WHERE company_id = ? AND pincode IS NOT NULL GROUP BY branch ORDER BY n DESC', [user.companyId]))
+      .map((b) => b.branch);
+    const branch = branches.includes(query.get('branch')) ? query.get('branch') : branches[0];
+    if (!branch) return { branches, branch: null, states: [] };
+    const loans = await portfolio(pool, user.companyId, { branch });
+    const agents = new Map((await pool.query('SELECT pincode, officer_code FROM area_agents WHERE company_id = ? AND branch = ?', [user.companyId, branch]))
+      .map((a) => [a.pincode, a.officer_code]));
+    const names = new Map((await pool.query("SELECT code, name, active FROM users WHERE company_id = ? AND role = 'officer'", [user.companyId]))
+      .map((u) => [u.code, u]));
+    const blank = () => ({ accounts: 0, overdue: 0, outstanding: 0, unassigned: 0 });
+    const add = (node, l) => {
+      node.accounts += 1;
+      node.overdue += l.overdue;
+      node.outstanding += l.outstanding;
+      if (!l.officerCode) node.unassigned += 1;
+    };
+    const states = new Map();
+    for (const l of loans) {
+      if (l.bucket === 'closed') continue;
+      const st = l.state || '—';
+      const di = l.district || '—';
+      const pin = l.pincode || '—';
+      if (!states.has(st)) states.set(st, { state: st, ...blank(), districts: new Map() });
+      const S = states.get(st);
+      if (!S.districts.has(di)) S.districts.set(di, { district: di, ...blank(), pincodes: new Map() });
+      const D = S.districts.get(di);
+      if (!D.pincodes.has(pin)) D.pincodes.set(pin, { pincode: pin, ...blank(), officers: {} });
+      const P = D.pincodes.get(pin);
+      for (const node of [S, D, P]) add(node, l);
+      if (l.officerCode) P.officers[l.officerCode] = (P.officers[l.officerCode] || 0) + 1;
+    }
+    const byOverdue = (a, b) => b.overdue - a.overdue;
+    return {
+      branches, branch,
+      states: [...states.values()].sort(byOverdue).map((S) => ({
+        ...S,
+        districts: [...S.districts.values()].sort(byOverdue).map((D) => ({
+          ...D,
+          pincodes: [...D.pincodes.values()].sort(byOverdue).map((P) => {
+            const agent = agents.get(P.pincode);
+            return {
+              ...P,
+              agent: agent ? { code: agent, name: names.get(agent)?.name || agent, active: Boolean(names.get(agent)?.active) } : null,
+              officers: Object.entries(P.officers).map(([code, n]) => ({ code, name: names.get(code)?.name || code, n })).sort((a, b) => b.n - a.n),
+            };
+          }),
+        })),
+      })),
+    };
+  });
+
+  /** Deputes an agent to one or more pincodes (or removes the agent), and assigns those pincodes' accounts. */
+  R('POST', '/areas/agent', async ({ req, user }) => {
+    const b = await readJson(req);
+    const branch = str(b.branch);
+    const pincodes = [...new Set((Array.isArray(b.pincodes) ? b.pincodes : []).map((p) => str(p)))].filter((p) => /^[1-9]\d{5}$/.test(p));
+    if (!branch || !pincodes.length || pincodes.length > 2000) throw new HttpError(400, 'Choose the pincodes to depute an agent to.');
+    const code = b.officerCode ? str(b.officerCode).toUpperCase() : null;
+    const mode = b.mode === 'unassigned' ? 'unassigned' : 'all';
+    return withTx(pool, async (conn) => {
+      if (code) await assertOfficer(conn, user.companyId, code, branch);
+      if (code) {
+        for (const p of pincodes) {
+          await conn.query('REPLACE INTO area_agents (company_id, branch, pincode, officer_code, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+            [user.companyId, branch, p, code, user.code, now()]);
+        }
+      } else {
+        await conn.query('DELETE FROM area_agents WHERE company_id = ? AND branch = ? AND pincode IN (?)', [user.companyId, branch, pincodes]);
+      }
+      let changed = 0;
+      if (code || mode === 'all') {
+        const r = await conn.query(
+          `UPDATE loans SET officer_code = ?, updated_at = ? WHERE company_id = ? AND branch = ? AND pincode IN (?)
+             AND ${mode === 'unassigned' ? 'officer_code IS NULL' : 'NOT (officer_code <=> ?)'}`,
+          [code, now(), user.companyId, branch, pincodes, ...(mode === 'unassigned' ? [] : [code])]);
+        changed = r.affectedRows;
+      }
+      await audit(conn, user, code ? 'area_agent_set' : 'area_agent_removed', code || 'unassigned',
+        { branch, pincodes: pincodes.slice(0, 50), count: pincodes.length, loans: changed, mode });
+      return { changed };
+    });
   });
 
   // ---------- import ----------

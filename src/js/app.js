@@ -88,6 +88,9 @@ function ptpTag(loan, today) {
   return `<span class="tag">${esc(t('PTP {date}', { date: fmtDate(ptp.ptpDate) }))}</span>`;
 }
 
+/** Village, or for recovery accounts the district and pincode. */
+const placeOf = (loan) => loan.borrower.village || [loan.area?.district, loan.area?.pincode].filter(Boolean).join(' ');
+
 function distanceText(loan) {
   const km = distanceKm(here, loan.borrower);
   if (km == null) return '';
@@ -102,7 +105,7 @@ function loanCard(loan, today, extra = '') {
         <strong>${esc(loan.borrower.name)}</strong>
         ${bucketBadge(st)}
       </div>
-      <div class="muted small">${esc(loan.loanNo)} · ${esc(loan.borrower.village)} ${isOfficer() ? distanceText(loan) : `· ${esc(loan.officerCode || t('unassigned'))}`}</div>
+      <div class="muted small">${esc(loan.loanNo)} · ${esc(placeOf(loan))} ${isOfficer() ? distanceText(loan) : `· ${esc(loan.officerCode || t('unassigned'))}`}</div>
       <div class="row between mt-s">
         <span>${t('Overdue')} <strong class="${st.overdue > 0 ? 'bad' : ''}">${formatINR(st.overdue)}</strong></span>
         <span class="tags">${ptpTag(loan, today)}${extra}</span>
@@ -235,7 +238,7 @@ function viewAccounts() {
       if (accountsFilter.bucket !== 'all' && (st.closed || st.bucket.key !== accountsFilter.bucket)) return false;
       if (!q) return true;
       const b = loan.borrower;
-      return [b.name, b.phone, b.village, loan.loanNo, loan.officerCode].some((v) => String(v ?? '').toLowerCase().includes(q));
+      return [b.name, b.phone, b.village, loan.loanNo, loan.officerCode, loan.area?.pincode, loan.area?.district].some((v) => String(v ?? '').toLowerCase().includes(q));
     })
     .sort((a, b) => b.st.dpd - a.st.dpd || b.st.overdue - a.st.overdue);
 
@@ -265,7 +268,7 @@ function viewLoan(id) {
   const st = loanStatus(loan, today);
   const b = loan.borrower;
   const ptp = activePromise(loan);
-  const dest = b.lat != null && b.lng != null ? `${b.lat},${b.lng}` : [b.address, b.village].filter(Boolean).join(', ');
+  const dest = b.lat != null && b.lng != null ? `${b.lat},${b.lng}` : [b.address, b.village, loan.area?.pincode].filter(Boolean).join(', ');
   const mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
   const history = [
     ...loan.payments.map((p) => ({ at: p.at, html: paymentLine(loan, p), synced: p.synced })),
@@ -283,7 +286,7 @@ function viewLoan(id) {
     <section class="card">
       <div class="row between"><span class="muted small">${esc(loan.loanNo)} · ${esc(loan.product)}</span>${bucketBadge(st)}</div>
       <div class="muted small">${esc(b.business)}${isOfficer() ? '' : ` · ${esc(t('officer {code}', { code: loan.officerCode || '—' }))}`}</div>
-      <div class="mt-s">${esc(b.address)}, ${esc(b.village)} ${distanceText(loan)}</div>
+      <div class="mt-s">${esc([b.address, b.village, loan.area?.pincode].filter(Boolean).join(', '))} ${distanceText(loan)}</div>
       <div class="actions mt">
         <a class="btn" href="tel:${esc(b.phone)}">📞 ${t('Call')}</a>
         <a class="btn" href="https://wa.me/91${esc(b.phone)}" target="_blank" rel="noopener">💬 ${t('WhatsApp')}</a>

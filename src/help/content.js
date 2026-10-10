@@ -390,6 +390,21 @@ export const TOPICS = [
     tips: ['Admin sessions end after 12 hours or when you close the browser.'],
   },
   {
+    id: 'areas', category: 'howto', audience: ['admin'],
+    title: 'Depute agents by pincode',
+    summary: 'Recovery lists come by state, district and pincode; give each pincode an agent.',
+    steps: [
+      'Import the lender’s list in <b>Import loans</b> (the VFS borrower file uploads as it is). Each account keeps its state, district and pincode.',
+      'In <b>Users</b>, add each agent as a <b>Field officer</b> with the same branch as the accounts (for VFS: <b>VFS</b>).',
+      'Open <b>Areas</b>, expand a state and a district, and click <b>Depute agent</b> on a pincode. Or tick several pincodes (or <b>Select all</b> in a district) and use <b>Depute agent</b> at the top.',
+      'Choose the agent and whether to move all accounts there or only the unassigned ones, then <b>Save</b>. The accounts appear on the agent’s phone within a minute.',
+    ],
+    tips: [
+      'Next month’s file: new accounts in a pincode that has an agent are assigned to that agent automatically; existing accounts keep their agent.',
+      'Use <b>Pincodes without an agent</b> to see what is still open. Click a pincode to see its accounts in <b>Loans</b>.',
+    ],
+  },
+  {
     id: 'admin-email', category: 'howto', audience: ['admin'],
     title: 'Email: forgotten password and summary emails',
     summary: 'Add your email address so you can reset your own password and get a daily or weekly summary.',

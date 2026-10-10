@@ -61,6 +61,7 @@ export default [
 
   // server/admin-api.js
   'Choose how often to send the summary email.',
+  'Choose the pincodes to depute an agent to.',
   '{code} is not a field officer.',
   '{code} is deactivated.',
   '{code} belongs to {branch}, not {otherBranch}.',
@@ -126,6 +127,10 @@ export default [
   'Officer {code} is deactivated.',
   'Officer {code} belongs to {branch}, not {otherBranch}.',
   'No officer assigned — the loan will be unassigned.',
+  'Overdue amount must be greater than 0.',
+  'Due-since date "{date}" is not a valid date.',
+  'Due-since date "" is not a valid date.',
+  'Assigned to {code}, the agent for pincode {pincode}.',
 
   // src/js/logic.js
   'Enter an amount greater than zero.',

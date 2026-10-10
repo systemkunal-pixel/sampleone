@@ -9,19 +9,19 @@ const MAX_INSTALLMENTS = 600;
 
 /** Canonical field → accepted column headings (compared lower-case, letters and digits only). */
 export const LOAN_COLUMNS = {
-  loanNo: ['loan no', 'loan number', 'loan_no', 'loan account', 'loan account no', 'loan account number', 'account no', 'account number', 'loan id'],
+  loanNo: ['loan no', 'loan number', 'loan_no', 'loan account', 'loan account no', 'loan account number', 'account no', 'account number', 'loan id', 'acct no', 'acct number'],
   id: ['id', 'system id', 'internal id'],
   branch: ['branch', 'branch name'],
   officerCode: ['officer code', 'officer', 'field officer', 'fo code', 'assigned officer', 'assigned to', 'collection officer'],
   product: ['product', 'product name', 'scheme', 'loan type'],
-  principal: ['principal', 'loan amount', 'sanctioned amount', 'disbursed amount', 'disbursement amount'],
+  principal: ['principal', 'loan amount', 'sanctioned amount', 'disbursed amount', 'disbursement amount', 'os amt', 'os amount', 'outstanding', 'outstanding amount', 'principal outstanding', 'pos'],
   emi: ['emi', 'emi amount', 'installment amount', 'instalment amount', 'installment'],
   disbursedOn: ['disbursed on', 'disbursement date', 'disbursal date', 'date of disbursement', 'disbursed date'],
   tenure: ['tenure', 'tenure months', 'no of installments', 'number of installments', 'no of emis', 'number of emis', 'installments count'],
   firstDueDate: ['first due date', 'first emi date', 'emi start date', 'first installment date', 'repayment start date'],
   frequency: ['frequency', 'repayment frequency', 'emi frequency'],
-  name: ['borrower name', 'borrower', 'customer name', 'customer', 'name', 'member name'],
-  phone: ['phone', 'mobile', 'mobile no', 'mobile number', 'phone number', 'contact', 'contact no'],
+  name: ['borrower name', 'borrower', 'customer name', 'customer', 'name', 'member name', 'cust name'],
+  phone: ['phone', 'mobile', 'mobile no', 'mobile number', 'phone number', 'contact', 'contact no', 'mob no', 'mob'],
   business: ['business', 'occupation', 'activity', 'business type'],
   address: ['address', 'house address', 'residential address'],
   village: ['village', 'area', 'locality', 'city', 'town', 'center', 'centre'],
@@ -29,6 +29,15 @@ export const LOAN_COLUMNS = {
   lng: ['longitude', 'lng', 'long', 'lon'],
   guarantorName: ['guarantor name', 'guarantor', 'co applicant', 'co-applicant'],
   guarantorPhone: ['guarantor phone', 'guarantor mobile', 'co applicant phone'],
+  state: ['state'],
+  district: ['district', 'dist'],
+  pincode: ['pin code', 'pincode', 'pin', 'postal code', 'zip'],
+  // Recovery lists (overdue accounts handed to an agency): one amount due since a date instead of an EMI schedule.
+  overdue: ['t odue', 'total odue', 'total overdue', 'overdue amount', 'total due', 'amount due', 'total dues'],
+  dueSince: ['due since', 'overdue since', 'due from'],
+  lender: ['pi name', 'lender', 'lender name', 'client', 'client name', 'institution'],
+  assetClass: ['asset class', 'asset classification'],
+  interestRate: ['int rate', 'interest rate', 'roi', 'rate of interest'],
 };
 export const INSTALLMENT_COLUMNS = {
   loanNo: LOAN_COLUMNS.loanNo,
@@ -37,6 +46,9 @@ export const INSTALLMENT_COLUMNS = {
   amount: ['amount', 'emi', 'emi amount', 'installment amount', 'due amount'],
 };
 const REQUIRED_HEADERS = ['loanNo', 'branch', 'principal', 'emi', 'disbursedOn', 'name', 'phone'];
+const RECOVERY_HEADERS = ['loanNo', 'name', 'phone', 'overdue', 'dueSince'];
+/** A recovery list has an overdue amount and a "due since" date, and no EMI column. */
+const isRecoveryLayout = (map) => map.overdue !== undefined && map.dueSince !== undefined && map.emi === undefined;
 
 const key = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -158,6 +170,8 @@ function tableToRecords(table, columns, sheetName) {
     if (!r || !nonEmpty(r)) continue;
     const values = {};
     for (const [field, col] of Object.entries(map)) values[field] = r[col];
+    // An officer column that is present but blank means "unassigned"; no column means "leave as is".
+    if (map.officerCode !== undefined && values.officerCode == null) values.officerCode = '';
     records.push({ rowNo: i + 1, sheet: sheetName, values });
   }
   return { records, map, headers };
@@ -227,7 +241,7 @@ export async function readImportFile(fileName, buf) {
   }
   const { records, map } = tableToRecords(loanTable, LOAN_COLUMNS, loanSheetName);
   if (records.length > MAX_ROWS) throw new ImportError(`Too many rows (${records.length}); the limit is ${MAX_ROWS} per file.`);
-  const missingHeaders = REQUIRED_HEADERS.filter((f) => map[f] === undefined);
+  const missingHeaders = (isRecoveryLayout(map) ? RECOVERY_HEADERS : REQUIRED_HEADERS).filter((f) => map[f] === undefined);
   const inst = instTable ? tableToRecords(instTable, INSTALLMENT_COLUMNS, 'Installments').records : [];
   return { format: ext, records, installments: inst, missingHeaders };
 }
@@ -249,10 +263,40 @@ function schedule({ emi, tenure, firstDueDate, frequency }) {
   return Array.from({ length: tenure }, (_, k) => ({ no: k + 1, dueDate: step(firstDueDate, k), amount: emi }));
 }
 
+/** "VFS CAPITAL LIMITED" → "VFS": the lender's first word names the branch of a recovery list. */
+const lenderShort = (v) => text(v, 100).split(' ')[0].toUpperCase();
+
+export const parsePincode = (v) => {
+  const d = String(v ?? '').replace(/\D/g, '');
+  return /^[1-9]\d{5}$/.test(d) ? d : null;
+};
+
+/** Recovery list row → the same values as a loan row: one installment of the overdue amount, due since the date given. */
+function recoveryValues(v, errors) {
+  const overdue = parseAmount(v.overdue);
+  if (!(overdue > 0)) errors.push('Overdue amount must be greater than 0.');
+  const dueSince = parseDate(v.dueSince);
+  if (!dueSince) errors.push(`Due-since date "${text(v.dueSince instanceof Date ? '' : v.dueSince, 20)}" is not a valid date.`);
+  const lender = lenderShort(v.lender);
+  const os = parseAmount(v.principal);
+  const rate = Number(v.interestRate);
+  return {
+    ...v,
+    branch: text(v.branch, 100) || lender || 'Recovery',
+    product: text(v.product, 60) || [lender, text(v.assetClass, 10).toUpperCase(), rate > 0 ? `${rate}%` : ''].filter(Boolean).join(' · ') || 'Recovery',
+    principal: os > 0 ? os : overdue,
+    emi: overdue,
+    disbursedOn: dueSince,
+    recoveryInstallments: overdue > 0 && dueSince ? [{ no: 1, dueDate: dueSince, amount: overdue }] : null,
+  };
+}
+
 /** Turns one raw record into a loan, or a list of problems. */
 function normaliseRecord(rec, instByLoan) {
   const errors = [];
-  const v = rec.structured ? structuredToValues(rec.structured) : rec.values;
+  let v = rec.structured ? structuredToValues(rec.structured) : rec.values;
+  const recovery = !rec.structured && v.overdue !== undefined && v.emi === undefined;
+  if (recovery) v = recoveryValues(v, errors);
   const loanNo = text(v.loanNo, 40);
   if (!loanNo) errors.push('Loan number is missing.');
   const branch = text(v.branch, 100);
@@ -267,7 +311,9 @@ function normaliseRecord(rec, instByLoan) {
   if (!(emi > 0)) errors.push('EMI must be an amount greater than 0.');
   const disbursedOn = parseDate(v.disbursedOn);
   if (!disbursedOn) errors.push(`Disbursement date "${text(v.disbursedOn instanceof Date ? '' : v.disbursedOn, 20)}" is not a valid date (use DD-MM-YYYY).`);
-  const officerCode = text(v.officerCode, 12).toUpperCase() || null;
+  // undefined: the file has no officer column (keep the current officer, or the pincode's agent for a new loan).
+  const officerCode = v.officerCode === undefined ? undefined : text(v.officerCode, 12).toUpperCase() || null;
+  const pincode = parsePincode(v.pincode);
   const id = text(v.id, 40) || (loanNo ? loanIdFor(loanNo) : '');
   if (v.id && !/^[A-Za-z0-9_-]{1,40}$/.test(id)) errors.push('ID may only contain letters, digits, - and _.');
 
@@ -283,7 +329,7 @@ function normaliseRecord(rec, instByLoan) {
 
   // Installments: explicit rows win; otherwise generate from tenure + first due date.
   let installments = [];
-  const explicit = rec.structured?.installments ?? instByLoan.get(key(loanNo));
+  const explicit = rec.structured?.installments ?? v.recoveryInstallments ?? instByLoan.get(key(loanNo));
   if (explicit?.length) {
     explicit.forEach((r, i) => {
       const dueDate = parseDate(r.dueDate);
@@ -295,7 +341,7 @@ function normaliseRecord(rec, instByLoan) {
     });
     installments.sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
     installments = installments.map((x, i) => ({ no: i + 1, ...x }));
-  } else {
+  } else if (!recovery) {
     const tenure = Number(v.tenure);
     const firstDueDate = parseDate(v.firstDueDate);
     const frequency = text(v.frequency, 20).toLowerCase() || 'monthly';
@@ -316,7 +362,8 @@ function normaliseRecord(rec, instByLoan) {
     rowNo: rec.rowNo,
     sheet: rec.sheet,
     loan: {
-      id, loanNo, branch, officerCode, product: text(v.product, 60) || 'Loan', principal, emi, disbursedOn,
+      id, loanNo, branch, ...(officerCode !== undefined ? { officerCode } : {}), product: text(v.product, 60) || 'Loan', principal, emi, disbursedOn,
+      state: text(v.state, 60) || null, district: text(v.district, 100) || null, pincode,
       borrower: {
         name, phone, business: text(v.business, 100), address: text(v.address, 200), village: text(v.village, 100),
         lat, lng, guarantor: gName || gPhone ? { name: gName, phone: gPhone || '' } : null,
@@ -330,6 +377,7 @@ function structuredToValues(o) {
   const b = o.borrower || {};
   return {
     loanNo: o.loanNo, id: o.id, branch: o.branch, officerCode: o.officerCode, product: o.product,
+    state: o.state, district: o.district, pincode: o.pincode,
     principal: o.principal, emi: o.emi, disbursedOn: o.disbursedOn, name: b.name, phone: b.phone,
     business: b.business, address: b.address, village: b.village, lat: b.lat, lng: b.lng,
     guarantorName: b.guarantor?.name, guarantorPhone: b.guarantor?.phone,
@@ -378,7 +426,7 @@ export async function checkAgainstDb(conn, companyId, valid, errors) {
   for (let i = 0; i < nos.length; i += 1000) {
     const chunk = nos.slice(i, i + 1000);
     const rows = await conn.query(
-      `SELECT l.id, l.loan_no, l.installments, (SELECT COUNT(*) FROM payments p WHERE p.loan_id = l.id) AS payments
+      `SELECT l.id, l.loan_no, l.installments, l.officer_code, l.branch, (SELECT COUNT(*) FROM payments p WHERE p.loan_id = l.id) AS payments
        FROM loans l WHERE l.company_id = ? AND l.loan_no IN (?)`, [companyId, chunk]);
     for (const r of rows) existing.set(r.loan_no.toLowerCase(), r);
   }
@@ -392,12 +440,25 @@ export async function checkAgainstDb(conn, companyId, valid, errors) {
     const rows = await conn.query('SELECT id, loan_no, company_id FROM loans WHERE id IN (?)', [ids.slice(i, i + 1000)]);
     for (const r of rows) existingIds.set(r.id, r.company_id === companyId ? r.loan_no : null);
   }
+  // Agents deputed to pincodes take new accounts in their pincode when the file names no officer.
+  const agents = new Map((await conn.query('SELECT branch, pincode, officer_code FROM area_agents WHERE company_id = ?', [companyId]))
+    .map((a) => [`${a.branch}|${a.pincode}`, a.officer_code]));
+  const usable = (code, branch) => {
+    const o = officers.get(code);
+    return o && o.active && o.branch === branch;
+  };
   const ok = [];
   for (const v of valid) {
     const { loan } = v;
     const problems = [];
     const warnings = [];
     const match = existing.get(loan.loanNo.toLowerCase());
+    if (loan.officerCode === undefined) {
+      const keep = match?.officer_code && match.branch === loan.branch && usable(match.officer_code, loan.branch) ? match.officer_code : null;
+      const agent = agents.get(`${loan.branch}|${loan.pincode}`);
+      loan.officerCode = keep || (agent && usable(agent, loan.branch) ? agent : null);
+      if (!keep && loan.officerCode) warnings.push(`Assigned to ${loan.officerCode}, the agent for pincode ${loan.pincode}.`);
+    }
     if (match) {
       loan.loanNo = match.loan_no; // keep stored spelling
       if (![match.id, loanIdFor(loan.loanNo), match.id.replace(prefix, '')].includes(loan.id)) problems.push(`Loan ${loan.loanNo} already exists with ID ${match.id}.`);

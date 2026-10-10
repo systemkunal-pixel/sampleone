@@ -251,6 +251,15 @@ Download the template from **Import loans → Excel template**. The rules:
 - **JSON:** an array of loans, either flat rows with the same headings or the API shape (`borrower {…}`, `installments […]`).
 - **Limits:** 10 MB and 20,000 loans per file. Old `.xls` files must be saved as `.xlsx` first.
 
+**Recovery lists** (overdue accounts handed over by a lender, e.g. the VFS "Borrower Details" file) upload as they
+are. A file with an overdue amount (`T_ODUE`, "Total Overdue") and a due-since date (`DUE_SINCE`) and no EMI column is
+read as a recovery list. Each account gets one amount due (the total overdue) since that date. The branch is the
+lender's first word (`VFS CAPITAL LIMITED` → `VFS`), and the product is lender · asset class · rate. State, District and
+PIN Code are kept on every account.
+
+When a file has no Officer column, re-importing keeps each account's current officer. New accounts go to the agent
+deputed to their pincode in **Areas** (State → District → Pincode), if there is one.
+
 Rows with errors are skipped. Valid rows can be imported straight away, and the error report lists every problem with its row number. The server re-validates everything when you confirm.
 
 ## Setup (local or server)
