@@ -169,6 +169,16 @@ Write-Host 'Database servers found on this PC:'
 $instances | Format-Table Service, State, Version, Port, DataDir, @{ Label = 'Usable'; Expression = { if ($_.Usable) { 'yes' } else { 'no (needs MariaDB 10.6+)' } } } -AutoSize |
   Out-String | Write-Host
 
+# Re-install: keep using the database server from the earlier install unless -DbPort says otherwise.
+$prevEnv = Join-Path $AppDir '.env'
+if (-not $DbPortGiven -and (Test-Path $prevEnv)) {
+  $m = Select-String -Path $prevEnv -Pattern '^DB_PORT=(\d+)' | Select-Object -First 1
+  if ($m -and ($instances | Where-Object { $_.Port -eq [int]$m.Matches[0].Groups[1].Value })) {
+    $DbPort = [int]$m.Matches[0].Groups[1].Value
+    $DbPortGiven = $true
+    Write-Host "Using the database server on port $DbPort, as in the earlier install."
+  }
+}
 if ($DbPortGiven) {
   $inst = $instances | Where-Object { $_.Port -eq $DbPort } | Select-Object -First 1
   if (-not $inst) { Fail "No database service uses port $DbPort. Choose one of the ports listed above." }
