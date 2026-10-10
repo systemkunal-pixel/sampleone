@@ -15,7 +15,7 @@
   and ports 80 and 443 must be open to the internet.
 
   It then:
-    - installs Node.js LTS (winget) if missing
+    - installs Node.js 22 LTS if missing (winget, or straight from nodejs.org with checksum and signature checks)
     - copies the app to C:\websites\loandesk\app (keeps .env, logs, backups and data on re-runs)
     - writes .env with the database details, checks the connection and creates/upgrades the tables
     - creates the first admin (company BRMC) and the overlord account, saved to C:\websites\loandesk\app\credentials.txt
@@ -162,12 +162,35 @@ function Test-Node {
   return ([int]$v[0] -gt 20) -or ([int]$v[0] -eq 20 -and [int]$v[1] -ge 12)
 }
 Step 'Checking Node.js'
-if (-not (Test-Node)) {
-  if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-    Fail 'Node.js 20.12+ is needed and winget is not available. Install Node.js LTS from https://nodejs.org/ and re-run.'
-  }
-  & winget.exe install --id OpenJS.NodeJS.LTS --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+# Node.js 22 LTS from nodejs.org (Windows Server has no winget): newest 22.x LTS, checked against the
+# published SHA-256 and the installer's digital signature before it runs.
+function Install-NodeMsi {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  $index = Invoke-RestMethod 'https://nodejs.org/dist/index.json' -UseBasicParsing
+  $rel = $index | Where-Object { $_.lts -and $_.version -like 'v22.*' } | Select-Object -First 1
+  if (-not $rel) { Fail 'Could not find the Node.js 22 LTS release on nodejs.org. Install Node.js LTS from https://nodejs.org/ and re-run.' }
+  $file = "node-$($rel.version)-x64.msi"
+  $msi = Join-Path $env:TEMP $file
+  Write-Host "Downloading Node.js $($rel.version) from nodejs.org..."
+  Invoke-WebRequest "https://nodejs.org/dist/$($rel.version)/$file" -OutFile $msi -UseBasicParsing
+  $sums = (Invoke-WebRequest "https://nodejs.org/dist/$($rel.version)/SHASUMS256.txt" -UseBasicParsing).Content
+  $expected = ($sums -split "`n" | Where-Object { $_ -match "\s$([regex]::Escape($file))$" } | ForEach-Object { ($_ -split '\s+')[0] }) | Select-Object -First 1
+  if (-not $expected -or (Get-FileHash $msi -Algorithm SHA256).Hash -ne $expected.ToUpper()) { Remove-Item $msi -Force; Fail 'The Node.js download does not match its published checksum. Try again later.' }
+  $sig = Get-AuthenticodeSignature $msi
+  if ($sig.Status -ne 'Valid') { Remove-Item $msi -Force; Fail 'The Node.js installer is not validly signed. Try again later.' }
+  $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait -PassThru
+  Remove-Item $msi -Force
+  if ($p.ExitCode -notin 0, 3010) { Fail "Installing Node.js failed (msiexec code $($p.ExitCode))." }
   Update-SessionPath
+  $default = Join-Path $env:ProgramFiles 'nodejs'
+  if ((Test-Path (Join-Path $default 'node.exe')) -and ($env:Path -notlike "*$default*")) { $env:Path = "$default;$env:Path" }
+}
+if (-not (Test-Node)) {
+  if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+    & winget.exe install --id OpenJS.NodeJS.LTS --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+    Update-SessionPath
+  }
+  if (-not (Test-Node)) { Install-NodeMsi }
   if (-not (Test-Node)) { Fail 'Node.js did not install. Install Node.js LTS from https://nodejs.org/, open a new PowerShell as Administrator and re-run.' }
 }
 $Node = (Get-Command node.exe).Source
