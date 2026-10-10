@@ -88,6 +88,30 @@ function ptpTag(loan, today) {
   return `<span class="tag">${esc(t('PTP {date}', { date: fmtDate(ptp.ptpDate) }))}</span>`;
 }
 
+/** What the client's file says about a recovery account: dues split, dates and class. */
+function recoveryCard(loan) {
+  const r = loan.recovery;
+  if (!r) return '';
+  const row = (label, v) => (v == null || v === '' ? '' : `<tr><td class="muted">${label}</td><td><strong>${v}</strong></td></tr>`);
+  const amt = (v) => (v == null ? null : formatINR(v));
+  return `<details class="card">
+    <summary>${t('As per {client}', { client: esc(loan.client?.name || t('client')) })}</summary>
+    <table class="schedule"><tbody>
+      ${row(t('Total overdue'), amt(r.tOdue))}
+      ${row(t('Principal overdue'), amt(r.pOdue))}
+      ${row(t('Interest overdue'), amt(r.iOdue))}
+      ${row(t('Other charges overdue'), amt(r.oOdue))}
+      ${row(t('Outstanding'), amt(r.osAmt))}
+      ${row(t('Overdue since'), r.dueSince ? esc(fmtDate(r.dueSince)) : null)}
+      ${row(t('Days overdue (in file)'), r.odDays)}
+      ${row(t('NPA date'), r.npaDate ? esc(fmtDate(r.npaDate)) : null)}
+      ${row(t('Asset class'), r.assetClass ? esc(r.assetClass) : null)}
+      ${row(t('Interest rate'), r.intRate != null ? `${r.intRate}%` : null)}
+      ${row(t('Customer code'), r.custCode ? esc(r.custCode) : null)}
+    </tbody></table>
+  </details>`;
+}
+
 /** Village, or for recovery accounts the district and pincode. */
 const placeOf = (loan) => loan.borrower.village || [loan.area?.district, loan.area?.pincode].filter(Boolean).join(' ');
 
@@ -284,7 +308,7 @@ function viewLoan(id) {
   return `
     ${header(b.name, isOfficer() ? '#/' : '#/accounts', isOfficer() ? 'collect-payment' : 'branch-view')}
     <section class="card">
-      <div class="row between"><span class="muted small">${esc(loan.loanNo)} · ${esc(loan.product)}</span>${bucketBadge(st)}</div>
+      <div class="row between"><span class="muted small">${loan.client ? `<b>${esc(loan.client.name)}</b> · ` : ''}${esc(loan.loanNo)} · ${esc(loan.product)}</span>${bucketBadge(st)}</div>
       <div class="muted small">${esc(b.business)}${isOfficer() ? '' : ` · ${esc(t('officer {code}', { code: loan.officerCode || '—' }))}`}</div>
       <div class="mt-s">${esc([b.address, b.village, loan.area?.pincode].filter(Boolean).join(', '))} ${distanceText(loan)}</div>
       <div class="actions mt">
@@ -301,6 +325,8 @@ function viewLoan(id) {
       <div class="stat"><span>${t('Next due')}</span><strong>${st.nextDue ? esc(fmtDate(st.nextDue.date)) : '—'}</strong><small>${st.nextDue ? formatINR(st.nextDue.amount) : ''}</small></div>
       <div class="stat"><span>${t('Promise')}</span><strong>${ptp && !ptp.kept ? esc(fmtDate(ptp.ptpDate)) : '—'}</strong><small>${ptp && !ptp.kept ? formatINR(ptp.ptpAmount) : ''}</small></div>
     </section>
+
+    ${recoveryCard(loan)}
 
     ${isOfficer() ? `
     <div class="actions sticky">

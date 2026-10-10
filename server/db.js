@@ -22,6 +22,48 @@ export async function migrate(pool) {
     .filter(Boolean);
   for (const s of statements) await pool.query(s);
   await makeUserCodesUnique(pool);
+  await agentsPerPincode(pool);
+  await recoveryListsToClients(pool);
+}
+
+/** v9: an agent deputed to a pincode covers it for every client, so area_agents loses its branch column. */
+async function agentsPerPincode(pool) {
+  const [col] = await pool.query("SHOW COLUMNS FROM area_agents LIKE 'branch'");
+  if (!col) return;
+  // Keep the most recent deputation where a pincode had agents under two branches.
+  await pool.query(
+    `DELETE a FROM area_agents a JOIN area_agents b ON a.company_id = b.company_id AND a.pincode = b.pincode
+       AND (a.updated_at < b.updated_at OR (a.updated_at = b.updated_at AND a.branch > b.branch))`);
+  await pool.query('ALTER TABLE area_agents DROP PRIMARY KEY, DROP COLUMN branch, ADD PRIMARY KEY (company_id, pincode)');
+}
+
+/**
+ * v9: accounts imported from a lender's recovery list before clients existed carried the lender as their
+ * branch ("VFS", product "VFS · NPA · 18%"). They move to a client of that name with no branch, and the
+ * field staff of that "branch" become staff for every client.
+ */
+async function recoveryListsToClients(pool) {
+  const lists = await pool.query(
+    `SELECT company_id, branch, COUNT(*) AS n FROM loans
+     WHERE client_id IS NULL AND pincode IS NOT NULL AND branch <> '' AND product LIKE CONCAT(branch, ' ·%')
+     GROUP BY company_id, branch`);
+  for (const l of lists) {
+    await withTx(pool, async (conn) => {
+      let [c] = await conn.query('SELECT id FROM clients WHERE company_id = ? AND code = ?', [l.company_id, l.branch.slice(0, 20)]);
+      if (!c) {
+        const r = await conn.query('INSERT INTO clients (company_id, code, name, created_at) VALUES (?, ?, ?, ?)',
+          [l.company_id, l.branch.slice(0, 20), l.branch, now()]);
+        c = { id: r.insertId };
+      }
+      await conn.query(
+        `UPDATE loans SET client_id = ?, branch = '' WHERE company_id = ? AND branch = ? AND client_id IS NULL AND pincode IS NOT NULL`,
+        [c.id, l.company_id, l.branch]);
+      await conn.query("UPDATE users SET branch = '' WHERE company_id = ? AND branch = ? AND role IN ('officer', 'supervisor')",
+        [l.company_id, l.branch]);
+      await audit(conn, { code: 'SYSTEM', companyId: l.company_id }, 'client_created', l.branch,
+        { accounts: l.n, reason: 'Recovery-list accounts moved from branch to client' });
+    });
+  }
 }
 
 /**
@@ -137,7 +179,20 @@ export function visitFromRow(r) {
   };
 }
 
+/** Columns of a client's recovery list kept on the account: API name → column. */
+export const RECOVERY_COLUMNS = {
+  custCode: 'cust_code', assetClass: 'asset_class', osAmt: 'os_amt', intRate: 'int_rate', dueSince: 'due_since', odDays: 'od_days',
+  pOdue: 'p_odue', iOdue: 'i_odue', oOdue: 'o_odue', tOdue: 't_odue', npaDate: 'npa_date',
+};
+
+function recoveryFromRow(r) {
+  const out = {};
+  for (const [k, col] of Object.entries(RECOVERY_COLUMNS)) if (r[col] != null) out[k] = r[col];
+  return Object.keys(out).length ? out : null;
+}
+
 export function loanFromRow(r) {
+  const recovery = recoveryFromRow(r);
   return {
     id: r.id,
     loanNo: r.loan_no,
@@ -151,6 +206,8 @@ export function loanFromRow(r) {
     installments: json(r.installments),
     followUpDate: r.follow_up_date,
     ...(r.pincode || r.district || r.state ? { area: { state: r.state, district: r.district, pincode: r.pincode } } : {}),
+    ...(r.client_id ? { client: { id: r.client_id, code: r.client_code, name: r.client_name } } : {}),
+    ...(recovery ? { recovery } : {}),
     payments: [],
     visits: [],
   };
@@ -166,7 +223,9 @@ export async function loadLoans(conn, { companyId, officerCode, branch, loanId }
       : ['l.branch = ?', branch];
   const scope = `l.company_id = ? AND ${where}`;
   const args = [companyId, arg];
-  const loans = (await conn.query(`SELECT l.* FROM loans l WHERE ${scope} ORDER BY l.loan_no`, args)).map(loanFromRow);
+  const loans = (await conn.query(
+    `SELECT l.*, c.code AS client_code, c.name AS client_name FROM loans l LEFT JOIN clients c ON c.id = l.client_id
+     WHERE ${scope} ORDER BY l.loan_no`, args)).map(loanFromRow);
   const byId = new Map(loans.map((l) => [l.id, l]));
   if (!loans.length) return loans;
   const payments = await conn.query(
@@ -183,18 +242,23 @@ export async function upsertLoan(conn, companyId, loan, importId = null) {
   // Loan ids are global; never let one company's upsert land on another company's row.
   const [owner] = await conn.query('SELECT company_id FROM loans WHERE id = ?', [loan.id]);
   if (owner && owner.company_id !== companyId) throw new Error(`Loan id ${loan.id} belongs to another company.`);
+  const rec = loan.recovery || {};
+  const recCols = Object.values(RECOVERY_COLUMNS);
   return conn.query(
     `INSERT INTO loans (company_id, id, loan_no, branch, officer_code, product, principal, emi, disbursed_on, borrower, installments,
-       follow_up_date, created_at, updated_at, import_id, state, district, pincode)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       follow_up_date, created_at, updated_at, import_id, state, district, pincode, client_id, source_row, ${recCols.join(', ')})
+     VALUES (${Array(20 + recCols.length).fill('?').join(', ')})
      ON DUPLICATE KEY UPDATE loan_no = VALUES(loan_no), branch = VALUES(branch), officer_code = VALUES(officer_code),
        product = VALUES(product), principal = VALUES(principal), emi = VALUES(emi), disbursed_on = VALUES(disbursed_on),
        borrower = VALUES(borrower), installments = VALUES(installments), updated_at = VALUES(updated_at),
-       import_id = VALUES(import_id), state = VALUES(state), district = VALUES(district), pincode = VALUES(pincode)`,
+       import_id = VALUES(import_id), state = VALUES(state), district = VALUES(district), pincode = VALUES(pincode),
+       client_id = VALUES(client_id), source_row = VALUES(source_row), ${recCols.map((c) => `${c} = VALUES(${c})`).join(', ')}`,
     [
-      companyId, loan.id, loan.loanNo, loan.branch, loan.officerCode || null, loan.product, loan.principal, loan.emi,
+      companyId, loan.id, loan.loanNo, loan.branch ?? '', loan.officerCode || null, loan.product, loan.principal, loan.emi,
       loan.disbursedOn, JSON.stringify(loan.borrower), JSON.stringify(loan.installments), loan.followUpDate || null,
       now(), now(), importId, loan.state || null, loan.district || null, loan.pincode || null,
+      loan.clientId || null, loan.sourceRow ? JSON.stringify(loan.sourceRow) : null,
+      ...Object.keys(RECOVERY_COLUMNS).map((k) => rec[k] ?? null),
     ]
   );
 }

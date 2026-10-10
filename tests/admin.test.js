@@ -44,7 +44,7 @@ before(async () => {
     host: env.TEST_DB_HOST || '127.0.0.1', port: Number(env.TEST_DB_PORT) || 3306,
     user: env.TEST_DB_USER, password: env.TEST_DB_PASSWORD || '', database: env.TEST_DB_NAME, connectionLimit: 5,
   });
-  for (const t of ['area_agents', 'password_resets', 'mail_log', 'mail_settings', 'imports', 'audit_log', 'deposit_slips', 'visits', 'payments', 'sessions', 'loans', 'users', 'companies',
+  for (const t of ['clients', 'area_agents', 'password_resets', 'mail_log', 'mail_settings', 'imports', 'audit_log', 'deposit_slips', 'visits', 'payments', 'sessions', 'loans', 'users', 'companies',
     'overlord_sessions', 'overlords', 'support_sessions', 'overlord_audit', 'plans', 'plan_features', 'company_feature_overrides',
     'platform_updates', 'platform_update_events', 'platform_state', 'leads']) {
     await pool.query(`DROP TABLE IF EXISTS ${t}`);
@@ -191,30 +191,49 @@ async function recoveryList(rows) {
   }
   return Buffer.from(await wb.xlsx.writeBuffer()).toString('base64');
 }
-const importAll = async (base64, fileName = 'vfs.xlsx') => {
-  const pre = (await call('/api/admin/import/preview', { method: 'POST', body: { fileName, base64 } })).body;
-  const done = (await call('/api/admin/import/commit', { method: 'POST', body: { fileName, totalRows: pre.totalRows, loans: pre.rows.map((r) => r.loan) } })).body;
+const importAll = async (base64, fileName = 'vfs.xlsx', clientId = undefined) => {
+  const pre = (await call('/api/admin/import/preview', { method: 'POST', body: { fileName, base64, clientId } })).body;
+  const done = (await call('/api/admin/import/commit', { method: 'POST', body: { fileName, totalRows: pre.totalRows, clientId, loans: pre.rows.map((r) => r.loan) } })).body;
   return { pre, done };
 };
-const officerOf = async (loanNo) => (await pool.query('SELECT officer_code FROM loans WHERE loan_no = ?', [loanNo]))[0]?.officer_code ?? null;
+const officerOf = async (loanNo, client = 'VFS') => (await pool.query(
+  'SELECT l.officer_code FROM loans l JOIN clients c ON c.id = l.client_id WHERE l.loan_no = ? AND c.code = ?', [loanNo, client]))[0]?.officer_code ?? null;
+let vfs;
 
 test('areas: a recovery list by pincode, agents deputed per pincode, new accounts follow the agent', opts, async () => {
+  // Agents have no branch: they work every client's accounts in their pincodes.
   for (const [code, name] of [['AG1', 'Agent One'], ['AG2', 'Agent Two']]) {
-    assert.equal((await call('/api/admin/users', { method: 'POST', body: { code, name, role: 'officer', branch: 'VFS', pin: '2468' } })).status, 200);
+    assert.equal((await call('/api/admin/users', { method: 'POST', body: { code, name, role: 'officer', branch: '', pin: '2468' } })).status, 200);
   }
-  const first = await importAll(await recoveryList([['V001', 711302, 'HOWRAH', 26530], ['V002', 711302, 'HOWRAH', 5000], ['V003', 721429, 'EAST MEDINIPORE', 9000]]));
-  assert.deepEqual(first.pre.missingHeaders, []);
-  assert.deepEqual([first.done.created, first.done.updated], [3, 0]);
+  // A list imported before clients existed (lender as branch) moves to a client of that name on upgrade.
+  const legacy = await importAll(await recoveryList([['V001', 711302, 'HOWRAH', 26530], ['V002', 711302, 'HOWRAH', 5000], ['V003', 721429, 'EAST MEDINIPORE', 9000]]));
+  assert.deepEqual([legacy.done.created, legacy.pre.rows[0].loan.branch], [3, 'VFS']);
+  const { migrate } = await import('../server/db.js');
+  await migrate(pool);
+  const { clients } = (await call('/api/admin/clients')).body;
+  vfs = clients.find((c) => c.code === 'VFS');
+  assert.equal(vfs.accounts, 3);
+  assert.deepEqual((await pool.query('SELECT DISTINCT branch FROM loans WHERE client_id = ?', [vfs.id])).map((r) => r.branch), ['']);
+  assert.equal((await call(`/api/admin/clients/${vfs.id}`, { method: 'PATCH', body: { name: 'VFS Capital Limited', feePct: 12.5 } })).status, 200);
+
+  // Re-importing for the client matches the same accounts and keeps every column of the file.
+  const first = await importAll(await recoveryList([['V001', 711302, 'HOWRAH', 26530], ['V002', 711302, 'HOWRAH', 5000], ['V003', 721429, 'EAST MEDINIPORE', 9000]]), 'vfs.xlsx', vfs.id);
+  assert.deepEqual([first.done.created, first.done.updated], [0, 3]);
+  assert.equal(first.pre.rows[0].loan.branch, '', 'no branch for a client without one');
+  const [row] = await pool.query("SELECT t_odue, os_amt, int_rate, asset_class, due_since, source_row FROM loans WHERE loan_no = 'V001'");
+  assert.deepEqual([row.t_odue, row.os_amt, row.int_rate, row.asset_class, row.due_since], [26530, 26530, 18, 'NPA', '2024-10-05']);
+  assert.equal(JSON.parse(row.source_row).PI_NAME, 'VFS CAPITAL LIMITED');
+  assert.equal((await call('/api/admin/import/preview', { method: 'POST', body: { fileName: 'x.xlsx', base64: await recoveryList([]), clientId: 999 } })).status, 400);
 
   let areas = (await call('/api/admin/areas')).body;
-  assert.equal(areas.branch, 'VFS');
+  assert.deepEqual(areas.clients.map((c) => c.code), ['VFS']);
   const wb = areas.states.find((s) => s.state === 'WEST BENGAL');
   assert.deepEqual(wb.districts.map((d) => [d.district, d.accounts, d.unassigned]), [['HOWRAH', 2, 2], ['EAST MEDINIPORE', 1, 1]]);
   assert.equal(wb.overdue, 26530 + 5000 + 9000);
 
-  // Depute AG1 to 711302: both accounts there are assigned.
-  assert.equal((await call('/api/admin/areas/agent', { method: 'POST', body: { branch: 'VFS', pincodes: ['711302'], officerCode: 'FO27' } })).status, 400, 'agent must belong to the branch');
-  const dep = (await call('/api/admin/areas/agent', { method: 'POST', body: { branch: 'VFS', pincodes: ['711302'], officerCode: 'AG1' } })).body;
+  // An officer tied to a branch takes only that branch's accounts; AG1 (no branch) takes both.
+  assert.equal((await call('/api/admin/areas/agent', { method: 'POST', body: { pincodes: ['711302'], officerCode: 'FO27' } })).body.changed, 0);
+  const dep = (await call('/api/admin/areas/agent', { method: 'POST', body: { pincodes: ['711302'], officerCode: 'AG1' } })).body;
   assert.equal(dep.changed, 2);
   areas = (await call('/api/admin/areas')).body;
   const pin = areas.states[0].districts.find((d) => d.district === 'HOWRAH').pincodes[0];
@@ -224,22 +243,32 @@ test('areas: a recovery list by pincode, agents deputed per pincode, new account
   await call('/api/admin/loans/assign', { method: 'POST', body: { loanIds: [first.pre.rows[2].loan.id], officerCode: 'AG2' } });
   const next = await importAll(await recoveryList([
     ['V001', 711302, 'HOWRAH', 20000], ['V002', 711302, 'HOWRAH', 5000], ['V003', 721429, 'EAST MEDINIPORE', 9000], ['V004', 711302, 'HOWRAH', 7000],
-  ]), 'vfs-next.xlsx');
+  ]), 'vfs-next.xlsx', vfs.id);
   assert.deepEqual([next.done.created, next.done.updated], [1, 3]);
   const v4 = next.pre.rows.find((r) => r.loan.loanNo === 'V004');
   assert.ok(v4.warnings.some((w) => /agent for pincode 711302/.test(w)));
-  assert.deepEqual(await Promise.all(['V001', 'V002', 'V003', 'V004'].map(officerOf)), ['AG1', 'AG1', 'AG2', 'AG1'], 'officers kept; the new account follows the agent');
+  assert.deepEqual(await Promise.all(['V001', 'V002', 'V003', 'V004'].map((n) => officerOf(n))), ['AG1', 'AG1', 'AG2', 'AG1'], 'officers kept; the new account follows the agent');
 
-  // Loans can be listed by pincode; the agent's phone gets the accounts with their area.
-  const list = (await call('/api/admin/loans?pincode=721429')).body;
-  assert.deepEqual(list.rows.map((r) => r.loanNo), ['V003']);
+  // A second client with the same account number in the same pincode: a separate account, same agent.
+  const sbi = (await call('/api/admin/clients', { method: 'POST', body: { code: 'SBI', name: 'State Bank of India' } })).body;
+  assert.equal((await call('/api/admin/clients', { method: 'POST', body: { code: 'sbi', name: 'Again' } })).status, 409);
+  const other = await importAll(await recoveryList([['V001', 711302, 'HOWRAH', 4000]]), 'sbi.xlsx', sbi.id);
+  assert.deepEqual([other.done.created, other.done.updated], [1, 0]);
+  assert.equal(await officerOf('V001', 'SBI'), 'AG1');
+  assert.equal((await call(`/api/admin/areas?client=${sbi.id}`)).body.states[0].accounts, 1);
+
+  // Loans can be listed by pincode and client; the agent's phone gets both clients' accounts with their details.
+  assert.deepEqual((await call('/api/admin/loans?pincode=721429')).body.rows.map((r) => r.loanNo), ['V003']);
+  assert.equal((await call(`/api/admin/loans?client=${sbi.id}`)).body.total, 1);
   const phone = (await call('/api/bootstrap', { token: await login('AG1', '2468') })).body;
-  assert.deepEqual(phone.loans.map((l) => l.loanNo).sort(), ['V001', 'V002', 'V004']);
-  assert.deepEqual(phone.loans[0].area, { state: 'WEST BENGAL', district: 'HOWRAH', pincode: '711302' });
-  assert.equal(phone.loans.find((l) => l.loanNo === 'V001').installments[0].amount, 20000, 'the new file updates the amount due');
+  assert.deepEqual(phone.loans.map((l) => `${l.client.code}:${l.loanNo}`).sort(), ['SBI:V001', 'VFS:V001', 'VFS:V002', 'VFS:V004']);
+  const v1 = phone.loans.find((l) => l.client.code === 'VFS' && l.loanNo === 'V001');
+  assert.deepEqual(v1.area, { state: 'WEST BENGAL', district: 'HOWRAH', pincode: '711302' });
+  assert.equal(v1.installments[0].amount, 20000, 'the new file updates the amount due');
+  assert.deepEqual([v1.client.name, v1.recovery.tOdue, v1.recovery.assetClass], ['VFS Capital Limited', 20000, 'NPA']);
 
   // Removing the agent but keeping the assignments.
-  assert.equal((await call('/api/admin/areas/agent', { method: 'POST', body: { branch: 'VFS', pincodes: ['711302'], officerCode: null, mode: 'unassigned' } })).body.changed, 0);
+  assert.equal((await call('/api/admin/areas/agent', { method: 'POST', body: { pincodes: ['711302'], officerCode: null, mode: 'unassigned' } })).body.changed, 0);
   assert.equal(await officerOf('V001'), 'AG1');
   assert.equal((await pool.query('SELECT COUNT(*) AS n FROM area_agents')).at(0).n, 0);
   const [entry] = await pool.query("SELECT action FROM audit_log WHERE action LIKE 'area_agent%' ORDER BY id DESC LIMIT 1");
@@ -261,12 +290,13 @@ test('agents have a home pincode and range; the recruitment plan places agents w
   assert.deepEqual(near.pincodes.map((p) => [p.pincode, p.km]), [['721429', 0]]);
   assert.equal((await call('/api/admin/areas/nearby/AG1')).status, 400, 'no home pincode yet');
 
-  const plan = (await call('/api/admin/areas/plan?branch=VFS&km=20&max=250&min=1&scope=all')).body;
-  assert.equal(plan.summary.accounts, 4);
+  const plan = (await call('/api/admin/areas/plan?km=20&max=250&min=1&scope=all')).body;
+  assert.equal(plan.summary.accounts, 5, 'all clients');
+  assert.equal((await call(`/api/admin/areas/plan?client=${vfs.id}&min=1&scope=all`)).body.summary.accounts, 4);
   assert.deepEqual(plan.agents.map((a) => a.base.pincode).sort(), ['711302', '721429']);
-  const open = (await call('/api/admin/areas/plan?branch=VFS&min=1')).body;
-  assert.equal(open.summary.accounts, 4, 'no pincode has an agent now, so all are open');
-  const xlsx = await fetch(`${base}/api/admin/areas/plan.xlsx?branch=VFS&min=1`, { headers: { Authorization: `Bearer ${admin}` } });
+  const open = (await call('/api/admin/areas/plan?min=1')).body;
+  assert.equal(open.summary.accounts, 5, 'no pincode has an agent now, so all are open');
+  const xlsx = await fetch(`${base}/api/admin/areas/plan.xlsx?min=1`, { headers: { Authorization: `Bearer ${admin}` } });
   assert.match(xlsx.headers.get('content-type'), /spreadsheetml/);
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(Buffer.from(await xlsx.arrayBuffer()));

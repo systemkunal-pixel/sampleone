@@ -43,12 +43,21 @@ function pincodeRows(d) {
 
 const figures = (n) => `<span class="area-fig">${accounts(n.accounts)} · ${inr(n.overdue)}${n.unassigned ? ` · <span class="badge warn">${t('{n} unassigned', { n: num(n.unassigned) })}</span>` : ''}</span>`;
 
+/** All clients, or one, when the company has accounts of more than one client. */
+function clientSelect(data) {
+  if (data.clients.length < 2) return data.client ? `<input type="hidden" name="client" value="${esc(data.client)}">` : '';
+  return `<select class="select" name="client" aria-label="${esc(t('Client'))}">
+    <option value="">${t('All clients')}</option>
+    ${data.clients.map((c) => `<option value="${c.id}" ${String(c.id) === String(data.client) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+  </select>`;
+}
+
 /* i18n: t('Pincodes') t('Agents') t('Recruitment plan') */
 const VIEWS = [['pincodes', 'Pincodes', 'map'], ['agents', 'Agents', 'users'], ['plan', 'Recruitment plan', 'plus']];
 
 function head(data, view) {
   const link = (v) => {
-    const p = new URLSearchParams({ ...(data.branch ? { branch: data.branch } : {}), ...(v === 'pincodes' ? {} : { view: v }) });
+    const p = new URLSearchParams({ ...(data.client ? { client: data.client } : {}), ...(v === 'pincodes' ? {} : { view: v }) });
     return `#/areas${p.toString() ? `?${p}` : ''}`;
   };
   return `
@@ -56,27 +65,28 @@ function head(data, view) {
       <div><h1>${t('Areas')}</h1><p>${t('Accounts by state, district and pincode. Depute an agent to a pincode: its accounts are assigned to them, and new accounts there go to them when you import.')}</p></div>
       <div class="page-actions">${helpButton('areas')}</div>
     </div>
-    ${data.branch ? `<nav class="tabs" aria-label="${esc(t('Areas'))}">${VIEWS.map(([v, label, ic]) =>
+    ${data.any ? `<nav class="tabs" aria-label="${esc(t('Areas'))}">${VIEWS.map(([v, label, ic]) =>
       `<a href="${link(v)}" class="${v === view ? 'active' : ''}" ${v === view ? 'aria-current="page"' : ''}>${icon(ic)} ${t(label)}</a>`).join('')}</nav>` : ''}`;
 }
 
 export async function render(el, q, alive) {
-  const branchParam = q.get('branch') || '';
-  const [data, { users }] = await Promise.all([api(`areas${branchParam ? `?branch=${encodeURIComponent(branchParam)}` : ''}`), api('users')]);
+  const clientParam = q.get('client') || '';
+  const [data, { users }] = await Promise.all([api(`areas${clientParam ? `?client=${encodeURIComponent(clientParam)}` : ''}`), api('users')]);
   if (!alive()) return;
   const view = VIEWS.some(([v]) => v === q.get('view')) ? q.get('view') : 'pincodes';
   el.removeEventListener('toggle', onToggle, true);
-  if (data.branch && view === 'plan') return renderPlan(el, q, data, alive);
-  if (data.branch && view === 'agents') return renderAgents(el, data, users);
+  if (data.any && view === 'plan') return renderPlan(el, q, data, alive);
+  if (data.any && view === 'agents') return renderAgents(el, data, users);
   return renderPincodes(el, q, data, users);
 }
 
 function renderPincodes(el, q, data, users) {
-  if (data.branch !== lastBranch) {
+  if (data.client !== lastBranch) {
     selected = new Set();
-    lastBranch = data.branch;
+    lastBranch = data.client;
   }
-  const officers = users.filter((u) => u.role === 'officer' && u.active && u.branch === data.branch);
+  // Agents: active field officers. Those without a branch work every client's accounts in their pincodes.
+  const officers = users.filter((u) => u.role === 'officer' && u.active);
   const find = (q.get('q') || '').trim().toLowerCase();
   const onlyOpen = q.get('show') === 'noagent';
   const all = data.states.flatMap((s) => s.districts.flatMap((d) => d.pincodes));
@@ -98,7 +108,7 @@ function renderPincodes(el, q, data, users) {
 
   el.innerHTML = `
     ${head(data, 'pincodes')}
-    ${data.branch ? `
+    ${data.any ? `
     <div class="mini-kpis">
       <div><span>${t('Pincodes')}</span><b>${num(pinCount)}</b></div>
       <div><span>${t('With an agent')}</span><b>${num(withAgent)}</b></div>
@@ -107,14 +117,14 @@ function renderPincodes(el, q, data, users) {
     </div>
     <form class="toolbar" id="filters" role="search">
       <label class="search"><span class="sr-only">${t('Search areas')}</span>${icon('search')}<input class="input" name="q" type="search" placeholder="${esc(t('Pincode, district or state'))}" value="${esc(q.get('q') || '')}"></label>
-      ${data.branches.length > 1 ? `<select class="select" name="branch" aria-label="${esc(t('Branch'))}">${data.branches.map((b) => `<option value="${esc(b)}" ${b === data.branch ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select>` : `<input type="hidden" name="branch" value="${esc(data.branch)}">`}
+      ${clientSelect(data)}
       <select class="select" name="show" aria-label="${esc(t('Show'))}">
         <option value="">${t('All pincodes')}</option>
         <option value="noagent" ${onlyOpen ? 'selected' : ''}>${t('Pincodes without an agent')}</option>
       </select>
     </form>
     <div id="bulk"></div>
-    ${officers.length ? '' : `<div class="warn-box" style="margin-bottom:16px">${icon('users')} ${t('Add field officers with branch {branch} in Users first; agents are chosen from them.', { branch: `<b>${esc(data.branch)}</b>` })}</div>`}
+    ${officers.length ? '' : `<div class="warn-box" style="margin-bottom:16px">${icon('users')} ${t('Add field officers in Users first (leave their branch empty to cover every client); agents are chosen from them.')}</div>`}
     ${states.length ? states.map((s) => `
       <details class="card area" data-area-key="s:${esc(s.state)}" ${expandAll || open.has(`s:${s.state}`) ? 'open' : ''}>
         <summary class="area-head">${icon('chevronRight', 'area-caret')}<b>${esc(s.state)}</b>${figures(s)}</summary>
@@ -150,11 +160,11 @@ function renderPincodes(el, q, data, users) {
       title: one ? t('Agent for pincode {pin}', { pin: esc(one.pincode) }) : t('Agent for {n} pincodes', { n: num(pincodes.length) }),
       ok: t('Save'),
       body: `<div class="form">
-        <p style="margin:0">${t('{accounts} in {branch}.', { accounts: accounts(n), branch: esc(data.branch) })}</p>
+        <p style="margin:0">${accounts(n)}${data.client ? '' : ` · ${t('all clients')}`}</p>
         <label class="field"><span>${t('Agent')}</span>
           <select class="select" name="officer">
             <option value="">${t('— No agent —')}</option>
-            ${officers.map((o) => `<option value="${esc(o.code)}" ${o.code === one?.agent?.code ? 'selected' : ''}>${esc(o.name)} (${esc(o.code)})</option>`).join('')}
+            ${officers.map((o) => `<option value="${esc(o.code)}" ${o.code === one?.agent?.code ? 'selected' : ''}>${esc(o.name)} (${esc(o.code)})${o.branch ? ` · ${esc(o.branch)}` : ''}</option>`).join('')}
           </select></label>
         <fieldset class="field" style="border:0;padding:0;margin:0"><span>${t('Which accounts')}</span>
           <label class="row" style="display:flex;gap:8px;align-items:center"><input type="radio" name="mode" value="all" checked> ${t('All accounts in these pincodes (moves them from other officers)')}</label>
@@ -162,7 +172,7 @@ function renderPincodes(el, q, data, users) {
         </fieldset>
         <p class="muted small" style="margin:0">${t('New accounts in these pincodes are assigned to this agent when you import.')}</p>
       </div>`,
-      onOk: (f) => api('areas/agent', { method: 'POST', body: { branch: data.branch, pincodes, officerCode: f.officer || null, mode: f.mode } }),
+      onOk: (f) => api('areas/agent', { method: 'POST', body: { pincodes, officerCode: f.officer || null, mode: f.mode } }),
     });
     if (!done) return;
     toast(done.changed === 1 ? t('1 account assigned') : t('{n} accounts assigned', { n: num(done.changed) }));
@@ -225,7 +235,7 @@ function renderPincodes(el, q, data, users) {
 function renderAgents(el, data, users) {
   const all = data.states.flatMap((s) => s.districts.flatMap((d) => d.pincodes));
   const deputed = (code) => new Set(all.filter((p) => p.agent?.code === code).map((p) => p.pincode)).size;
-  const agents = users.filter((u) => u.role === 'officer' && u.branch === data.branch);
+  const agents = users.filter((u) => u.role === 'officer' && (!u.branch || u.basePincode));
   el.innerHTML = `
     ${head(data, 'agents')}
     <p class="muted" style="margin-top:0">${t('Give each agent a home pincode and how far they travel (Users → edit). Then pick the pincodes within their reach.')}</p>
@@ -240,7 +250,7 @@ function renderAgents(el, data, users) {
           <td class="right num" data-label="${esc(t('Accounts'))}"><a href="#/loans?officer=${encodeURIComponent(u.code)}">${num(u.loans)}</a></td>
           <td class="actions"><div class="row-actions">${u.active && u.basePincode ? `<button class="btn sm" data-reach="${esc(u.code)}">${icon('map')} ${t('Pincodes in range')}</button>` : ''}</div></td>
         </tr>`).join('')}</tbody></table></div>`
-        : emptyState(t('No agents in {branch} yet', { branch: data.branch }), t('Add field officers with branch {branch} in Users, with their home pincode.', { branch: data.branch }), 'users')}
+        : emptyState(t('No agents yet'), t('Add field officers in Users with their home pincode, leaving the branch empty.'), 'users')}
     </section>`;
 
   el.onclick = async (e) => {
@@ -272,7 +282,7 @@ function renderAgents(el, data, users) {
       onOk: (f, form) => {
         const pincodes = [...form.querySelectorAll('input[name=pin]:checked')].map((c) => c.value);
         if (!pincodes.length) throw new Error(t('Tick at least one pincode.'));
-        return api('areas/agent', { method: 'POST', body: { branch: data.branch, pincodes, officerCode: u.code, mode: f.onlyUnassigned ? 'unassigned' : 'all' } });
+        return api('areas/agent', { method: 'POST', body: { pincodes, officerCode: u.code, mode: f.onlyUnassigned ? 'unassigned' : 'all' } });
       },
     });
     if (!done) return;
@@ -285,7 +295,7 @@ function renderAgents(el, data, users) {
 
 async function renderPlan(el, q, data, alive) {
   const params = new URLSearchParams({
-    branch: data.branch, km: q.get('km') || '20', max: q.get('max') || '250', min: q.get('min') || '20', scope: q.get('scope') || 'open',
+    ...(data.client ? { client: data.client } : {}), km: q.get('km') || '20', max: q.get('max') || '250', min: q.get('min') || '20', scope: q.get('scope') || 'open',
   });
   const plan = await api(`areas/plan?${params}`);
   if (!alive()) return;
@@ -306,6 +316,7 @@ async function renderPlan(el, q, data, alive) {
   el.innerHTML = `
     ${head(data, 'plan')}
     <form class="toolbar" id="plan-form">
+      ${clientSelect(data)}
       <label class="field inline"><span>${t('Range (km)')}</span><input class="input" name="km" type="number" min="1" max="200" value="${esc(params.get('km'))}" style="width:90px"></label>
       <label class="field inline"><span>${t('Most accounts per agent')}</span><input class="input" name="max" type="number" min="10" max="5000" value="${esc(params.get('max'))}" style="width:100px"></label>
       <label class="field inline"><span>${t('Smallest agent')}</span><input class="input" name="min" type="number" min="0" max="1000" value="${esc(params.get('min'))}" style="width:90px"></label>
@@ -332,11 +343,11 @@ async function renderPlan(el, q, data, alive) {
   const form = el.querySelector('#plan-form');
   el.onsubmit = (e) => {
     e.preventDefault();
-    setQuery({ branch: data.branch, view: 'plan', ...Object.fromEntries(new FormData(form)) });
+    setQuery({ view: 'plan', ...Object.fromEntries(new FormData(form)) });
   };
   el.onclick = (e) => {
     if (e.target.closest('[data-act=xlsx]')) {
-      const p = new URLSearchParams({ branch: data.branch, ...Object.fromEntries(new FormData(form)) });
+      const p = new URLSearchParams(Object.fromEntries(new FormData(form)));
       download(`areas/plan.xlsx?${p}`, 'recruitment-plan.xlsx').catch((ex) => toast(tr(ex.message), 'bad'));
     }
   };

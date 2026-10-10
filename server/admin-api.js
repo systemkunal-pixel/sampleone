@@ -7,7 +7,7 @@ import { HttpError, send } from './http.js';
 import { EMAIL } from './mail.js';
 import { locate, within, recruitmentPlan } from './geo.js';
 import ExcelJS from 'exceljs';
-import { readImportFile, normalise, checkAgainstDb, buildTemplate, ImportError, MAX_FILE_BYTES } from './importer.js';
+import { readImportFile, normalise, checkAgainstDb, buildTemplate, ImportError, MAX_FILE_BYTES, officerFits } from './importer.js';
 
 const ROLES = ['officer', 'supervisor', 'admin'];
 const CODE = /^[A-Z0-9]{2,12}$/;
@@ -48,10 +48,12 @@ function userRow(u) {
 }
 
 /** Loans with just enough payment data to compute dues, filtered in SQL. */
-export async function portfolio(pool, companyId, { branch, officer, q, loanIds, state, district, pincode } = {}) {
+export async function portfolio(pool, companyId, { branch, officer, q, loanIds, state, district, pincode, client } = {}) {
   const where = ['l.company_id = ?'];
   const args = [companyId];
-  if (branch) where.push('l.branch = ?'), args.push(branch);
+  if (branch != null) where.push('l.branch = ?'), args.push(branch);
+  if (client === 'none') where.push('l.client_id IS NULL');
+  else if (client) where.push('l.client_id = ?'), args.push(Number(client) || 0);
   if (state) where.push('l.state = ?'), args.push(state);
   if (district) where.push('l.district = ?'), args.push(district);
   if (pincode) where.push('l.pincode = ?'), args.push(pincode);
@@ -66,7 +68,7 @@ export async function portfolio(pool, companyId, { branch, officer, q, loanIds, 
   const sql = `WHERE ${where.join(' AND ')}`;
   const rows = await pool.query(
     `SELECT l.id, l.loan_no, l.branch, l.officer_code, l.product, l.principal, l.emi, l.disbursed_on, l.borrower,
-            l.installments, l.updated_at, l.state, l.district, l.pincode, u.name AS officer_name
+            l.installments, l.updated_at, l.state, l.district, l.pincode, l.client_id, u.name AS officer_name
      FROM loans l LEFT JOIN users u ON u.company_id = l.company_id AND u.code = l.officer_code ${sql}`, args);
   const pays = await pool.query(
     `SELECT p.loan_id, p.amount, p.verification FROM payments p JOIN loans l ON l.id = p.loan_id ${sql}`, args);
@@ -82,7 +84,7 @@ export async function portfolio(pool, companyId, { branch, officer, q, loanIds, 
     return {
       id: r.id, loanNo: r.loan_no, branch: r.branch, officerCode: r.officer_code, officerName: r.officer_name,
       product: r.product, principal: r.principal, emi: r.emi, disbursedOn: r.disbursed_on, updatedAt: r.updated_at,
-      state: r.state, district: r.district, pincode: r.pincode,
+      state: r.state, district: r.district, pincode: r.pincode, clientId: r.client_id,
       borrower: { name: borrower.name, phone: borrower.phone, village: borrower.village },
       outstanding: st.outstanding, overdue: st.overdue, dpd: st.dpd, bucket: st.closed ? 'closed' : st.bucket.key,
     };
@@ -111,7 +113,7 @@ async function assertOfficer(conn, companyId, code, branch) {
   const [o] = await conn.query("SELECT code, branch, active FROM users WHERE company_id = ? AND code = ? AND role = 'officer'", [companyId, code]);
   if (!o) throw new HttpError(400, `${code} is not a field officer.`);
   if (!o.active) throw new HttpError(400, `${code} is deactivated.`);
-  if (branch && o.branch !== branch) throw new HttpError(400, `${code} belongs to ${o.branch}, not ${branch}.`);
+  if (branch !== undefined && branch !== null && !officerFits(o, branch)) throw new HttpError(400, `${code} belongs to ${o.branch}, not ${branch}.`);
   return o;
 }
 
@@ -220,7 +222,7 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     if (!CODE.test(code)) throw new HttpError(400, 'Code must be 2–12 letters or digits.');
     if (code === SUPPORT_CODE) throw new HttpError(400, `${SUPPORT_CODE} is reserved for LoanDesk support.`);
     if (name.length < 2 || name.length > 100) throw new HttpError(400, 'Enter the full name.');
-    if (branch.length < 2 || branch.length > 100) throw new HttpError(400, 'Enter the branch.');
+    if (branch.length > 100 || (role === 'admin' && branch.length < 2)) throw new HttpError(400, 'Enter the branch.');
     if (!ROLES.includes(role)) throw new HttpError(400, 'Choose a role.');
     if (!validPin(b.pin, role)) throw new HttpError(400, pinRule(role));
     const mail = emailFields(b, role);
@@ -248,7 +250,7 @@ export function mountAdmin(router, { pool, authed, readJson }) {
         active: b.active !== undefined ? Boolean(b.active) : Boolean(u.active),
       };
       if (next.name.length < 2 || next.name.length > 100) throw new HttpError(400, 'Enter the full name.');
-      if (next.branch.length < 2 || next.branch.length > 100) throw new HttpError(400, 'Enter the branch.');
+      if (next.branch.length > 100 || (next.role === 'admin' && next.branch.length < 2)) throw new HttpError(400, 'Enter the branch.');
       if (!ROLES.includes(next.role)) throw new HttpError(400, 'Choose a role.');
       const mail = emailFields(b, next.role, u);
       const home = baseFields(b, next.role, u);
@@ -313,7 +315,8 @@ export function mountAdmin(router, { pool, authed, readJson }) {
   // ---------- loans ----------
 
   const listParams = (query) => ({
-    branch: str(query.get('branch')) || undefined,
+    branch: query.get('branch') === '__none' ? '' : str(query.get('branch')) || undefined,
+    client: str(query.get('client')) || undefined,
     officer: str(query.get('officer')) || undefined,
     q: str(query.get('q')).slice(0, 60) || undefined,
     state: str(query.get('state')) || undefined,
@@ -351,12 +354,15 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     const [loan] = await loadLoans(pool, { companyId: user.companyId, loanId: params.id });
     if (!loan) throw new HttpError(404, 'Loan not found.');
     const [meta] = await pool.query(
-      `SELECT l.created_at, l.updated_at, i.file_name, i.at AS imported_at, u.name AS officer_name
+      `SELECT l.created_at, l.updated_at, l.source_row, i.file_name, i.at AS imported_at, u.name AS officer_name
        FROM loans l LEFT JOIN imports i ON i.id = l.import_id LEFT JOIN users u ON u.company_id = l.company_id AND u.code = l.officer_code
        WHERE l.id = ?`, [params.id]);
     return {
       loan, status: loanStatus(loan),
-      meta: { createdAt: meta.created_at, updatedAt: meta.updated_at, importFile: meta.file_name, importedAt: meta.imported_at, officerName: meta.officer_name },
+      meta: {
+        createdAt: meta.created_at, updatedAt: meta.updated_at, importFile: meta.file_name, importedAt: meta.imported_at, officerName: meta.officer_name,
+        sourceRow: meta.source_row ? JSON.parse(meta.source_row) : null,
+      },
     };
   });
 
@@ -365,8 +371,11 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     if (loans.length !== ids.length) throw new HttpError(404, 'Some loans were not found.');
     if (officerCode) {
       const branches = [...new Set(loans.map((l) => l.branch))];
-      if (branches.length > 1) throw new HttpError(400, `Selected loans span branches (${branches.join(', ')}). Assign one branch at a time.`);
-      await assertOfficer(conn, user.companyId, officerCode, branches[0]);
+      const o = await assertOfficer(conn, user.companyId, officerCode);
+      if (o.branch) {
+        if (branches.length > 1) throw new HttpError(400, `Selected loans span branches (${branches.join(', ')}). Assign one branch at a time.`);
+        await assertOfficer(conn, user.companyId, officerCode, branches[0]);
+      }
     }
     const changed = loans.filter((l) => l.officer_code !== officerCode);
     if (changed.length) {
@@ -393,14 +402,21 @@ export function mountAdmin(router, { pool, authed, readJson }) {
 
   // ---------- areas: state → district → pincode, and the agent deputed to each pincode ----------
 
+  /** Clients that have accounts with a pincode, for the Areas filter. */
+  async function areaClients(companyId) {
+    return pool.query(
+      `SELECT c.id, c.code, c.name, COUNT(l.id) AS accounts FROM clients c JOIN loans l ON l.client_id = c.id AND l.pincode IS NOT NULL
+       WHERE c.company_id = ? GROUP BY c.id ORDER BY accounts DESC`, [companyId]);
+  }
+  const clientParam = (query, clients) => (clients.some((c) => String(c.id) === query.get('client')) ? query.get('client') : '');
+
   R('GET', '/areas', async ({ query, user }) => {
-    const branches = (await pool.query(
-      'SELECT branch, COUNT(*) AS n FROM loans WHERE company_id = ? AND pincode IS NOT NULL GROUP BY branch ORDER BY n DESC', [user.companyId]))
-      .map((b) => b.branch);
-    const branch = branches.includes(query.get('branch')) ? query.get('branch') : branches[0];
-    if (!branch) return { branches, branch: null, states: [] };
-    const loans = await portfolio(pool, user.companyId, { branch });
-    const agents = new Map((await pool.query('SELECT pincode, officer_code FROM area_agents WHERE company_id = ? AND branch = ?', [user.companyId, branch]))
+    const clients = await areaClients(user.companyId);
+    const [{ n }] = await pool.query('SELECT COUNT(*) AS n FROM loans WHERE company_id = ? AND pincode IS NOT NULL', [user.companyId]);
+    const client = clientParam(query, clients);
+    if (!n) return { clients, client, any: false, states: [] };
+    const loans = (await portfolio(pool, user.companyId, { client: client || undefined })).filter((l) => l.pincode);
+    const agents = new Map((await pool.query('SELECT pincode, officer_code FROM area_agents WHERE company_id = ?', [user.companyId]))
       .map((a) => [a.pincode, a.officer_code]));
     const names = new Map((await pool.query("SELECT code, name, active FROM users WHERE company_id = ? AND role = 'officer'", [user.companyId]))
       .map((u) => [u.code, u]));
@@ -428,7 +444,7 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     }
     const byOverdue = (a, b) => b.overdue - a.overdue;
     return {
-      branches, branch,
+      clients, client, any: true,
       states: [...states.values()].sort(byOverdue).map((S) => ({
         ...S,
         districts: [...S.districts.values()].sort(byOverdue).map((D) => ({
@@ -446,10 +462,10 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     };
   });
 
-  /** One row per pincode of a branch: accounts, overdue and agent (open loans only). */
-  async function pincodeFigures(companyId, branch) {
-    const loans = await portfolio(pool, companyId, { branch });
-    const agents = new Map((await pool.query('SELECT pincode, officer_code FROM area_agents WHERE company_id = ? AND branch = ?', [companyId, branch]))
+  /** One row per pincode: accounts, overdue and agent (open loans only), for one client or all. */
+  async function pincodeFigures(companyId, client) {
+    const loans = await portfolio(pool, companyId, { client: client || undefined });
+    const agents = new Map((await pool.query('SELECT pincode, officer_code FROM area_agents WHERE company_id = ?', [companyId]))
       .map((a) => [a.pincode, a.officer_code]));
     const pins = new Map();
     for (const l of loans) {
@@ -476,11 +492,12 @@ export function mountAdmin(router, { pool, authed, readJson }) {
   });
 
   async function plan(user, query) {
-    const branch = str(query.get('branch'));
-    if (!branch) throw new HttpError(400, 'Choose a branch.');
+    const clients = await areaClients(user.companyId);
+    const client = clientParam(query, clients);
     const p = planParams(query);
-    const pins = (await pincodeFigures(user.companyId, branch)).filter((x) => !p.open || !x.agent);
-    return { branch, open: p.open, ...recruitmentPlan(pins, p) };
+    const pins = (await pincodeFigures(user.companyId, client)).filter((x) => !p.open || !x.agent);
+    const name = client ? clients.find((c) => String(c.id) === client).name : 'All clients';
+    return { client, clientName: name, open: p.open, ...recruitmentPlan(pins, p) };
   }
 
   R('GET', '/areas/plan', async ({ query, user }) => plan(user, query));
@@ -516,14 +533,14 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     const about = wb.addWorksheet('About');
     about.columns = [{ width: 28 }, { width: 80 }];
     for (const r of [
-      ['Branch', pl.branch], ['Range', `${pl.range} km (straight line; by road usually 20–40% more)`], ['Most accounts per agent', pl.max],
+      ['Client', pl.clientName], ['Range', `${pl.range} km (straight line; by road usually 20–40% more)`], ['Most accounts per agent', pl.max],
       ['Smallest agent', `${pl.min} accounts; smaller groups are listed as thin areas`],
       ['Pincodes', pl.open ? 'Only pincodes without a deputed agent' : 'All pincodes'], ['Made', now()],
       ['Pincode locations', 'Department of Posts, All India Pincode Directory (Open Government Data Platform India)'],
     ]) about.addRow(r);
     send(res, 200, Buffer.from(await wb.xlsx.writeBuffer()), {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="recruitment-plan-${pl.branch.replace(/[^\w-]+/g, '_')}-${pl.range}km.xlsx"`,
+      'Content-Disposition': `attachment; filename="recruitment-plan-${pl.clientName.replace(/[^\w-]+/g, '_')}-${pl.range}km.xlsx"`,
     });
   });
 
@@ -534,7 +551,7 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     if (!o) throw new HttpError(404, 'User not found.');
     if (!o.base_pincode) throw new HttpError(400, 'Set the agent’s home pincode first (Users → edit).');
     const range = Number(query.get('km')) || o.range_km || 20;
-    const pins = await pincodeFigures(user.companyId, o.branch);
+    const pins = await pincodeFigures(user.companyId, '');
     return {
       agent: { code: o.code, name: o.name, branch: o.branch, basePincode: o.base_pincode, located: Boolean(locate(o.base_pincode)) },
       range, pincodes: within(o.base_pincode, pins, range),
@@ -544,34 +561,111 @@ export function mountAdmin(router, { pool, authed, readJson }) {
   /** Deputes an agent to one or more pincodes (or removes the agent), and assigns those pincodes' accounts. */
   R('POST', '/areas/agent', async ({ req, user }) => {
     const b = await readJson(req);
-    const branch = str(b.branch);
     const pincodes = [...new Set((Array.isArray(b.pincodes) ? b.pincodes : []).map((p) => str(p)))].filter((p) => /^[1-9]\d{5}$/.test(p));
-    if (!branch || !pincodes.length || pincodes.length > 2000) throw new HttpError(400, 'Choose the pincodes to depute an agent to.');
+    if (!pincodes.length || pincodes.length > 2000) throw new HttpError(400, 'Choose the pincodes to depute an agent to.');
     const code = b.officerCode ? str(b.officerCode).toUpperCase() : null;
     const mode = b.mode === 'unassigned' ? 'unassigned' : 'all';
     return withTx(pool, async (conn) => {
-      if (code) await assertOfficer(conn, user.companyId, code, branch);
+      // The agent covers these pincodes for every client; an agent tied to a branch only takes that branch's accounts.
+      const o = code ? await assertOfficer(conn, user.companyId, code) : null;
       if (code) {
         for (const p of pincodes) {
-          await conn.query('REPLACE INTO area_agents (company_id, branch, pincode, officer_code, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-            [user.companyId, branch, p, code, user.code, now()]);
+          await conn.query('REPLACE INTO area_agents (company_id, pincode, officer_code, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)',
+            [user.companyId, p, code, user.code, now()]);
         }
       } else {
-        await conn.query('DELETE FROM area_agents WHERE company_id = ? AND branch = ? AND pincode IN (?)', [user.companyId, branch, pincodes]);
+        await conn.query('DELETE FROM area_agents WHERE company_id = ? AND pincode IN (?)', [user.companyId, pincodes]);
       }
       let changed = 0;
       if (code || mode === 'all') {
         const r = await conn.query(
-          `UPDATE loans SET officer_code = ?, updated_at = ? WHERE company_id = ? AND branch = ? AND pincode IN (?)
+          `UPDATE loans SET officer_code = ?, updated_at = ? WHERE company_id = ? AND pincode IN (?) ${o?.branch ? 'AND branch = ?' : ''}
              AND ${mode === 'unassigned' ? 'officer_code IS NULL' : 'NOT (officer_code <=> ?)'}`,
-          [code, now(), user.companyId, branch, pincodes, ...(mode === 'unassigned' ? [] : [code])]);
+          [code, now(), user.companyId, pincodes, ...(o?.branch ? [o.branch] : []), ...(mode === 'unassigned' ? [] : [code])]);
         changed = r.affectedRows;
       }
       await audit(conn, user, code ? 'area_agent_set' : 'area_agent_removed', code || 'unassigned',
-        { branch, pincodes: pincodes.slice(0, 50), count: pincodes.length, loans: changed, mode });
+        { pincodes: pincodes.slice(0, 50), count: pincodes.length, loans: changed, mode });
       return { changed };
     });
   });
+
+  // ---------- clients: the lenders whose accounts this company recovers ----------
+
+  const CLIENT_CODE = /^[A-Z0-9][A-Z0-9_-]{1,19}$/;
+
+  function clientFields(b, partial = false) {
+    const out = {};
+    if (!partial || b.code !== undefined) {
+      out.code = str(b.code).toUpperCase();
+      if (!CLIENT_CODE.test(out.code)) throw new HttpError(400, 'Client code must be 2–20 letters, digits, - or _.');
+    }
+    if (!partial || b.name !== undefined) {
+      out.name = str(b.name);
+      if (out.name.length < 2 || out.name.length > 150) throw new HttpError(400, "Enter the client's name.");
+    }
+    for (const [k, col, max] of [['contactName', 'contact_name', 100], ['contactEmail', 'contact_email', 190], ['contactPhone', 'contact_phone', 20]]) {
+      if (!partial || b[k] !== undefined) out[col] = str(b[k]).slice(0, max) || null;
+    }
+    if (out.contact_email && !EMAIL.test(out.contact_email)) throw new HttpError(400, 'Enter a valid email address, or leave it empty.');
+    if (!partial || b.feePct !== undefined) {
+      const f = b.feePct === '' || b.feePct == null ? null : Number(b.feePct);
+      if (f !== null && !(f >= 0 && f <= 100)) throw new HttpError(400, 'Fee must be a percentage from 0 to 100, or empty.');
+      out.fee_pct = f;
+    }
+    if (b.active !== undefined) out.active = Boolean(b.active);
+    return out;
+  }
+
+  const clientRow = (c) => ({
+    id: c.id, code: c.code, name: c.name, contactName: c.contact_name, contactEmail: c.contact_email, contactPhone: c.contact_phone,
+    feePct: c.fee_pct, active: Boolean(c.active), createdAt: c.created_at, accounts: Number(c.accounts || 0), overdue: Number(c.overdue || 0),
+  });
+
+  R('GET', '/clients', async ({ user }) => {
+    const rows = await pool.query(
+      `SELECT c.*, COUNT(l.id) AS accounts, SUM(l.t_odue) AS overdue FROM clients c LEFT JOIN loans l ON l.client_id = c.id
+       WHERE c.company_id = ? GROUP BY c.id ORDER BY c.active DESC, c.name`, [user.companyId]);
+    return { clients: rows.map(clientRow) };
+  });
+
+  R('POST', '/clients', async ({ req, user }) => {
+    const f = clientFields(await readJson(req));
+    try {
+      const r = await pool.query(
+        `INSERT INTO clients (company_id, code, name, contact_name, contact_email, contact_phone, fee_pct, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [user.companyId, f.code, f.name, f.contact_name, f.contact_email, f.contact_phone, f.fee_pct, now()]);
+      await audit(pool, user, 'client_created', f.code, { name: f.name });
+      return { id: r.insertId };
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') throw new HttpError(409, `Client code ${f.code} is already used.`);
+      throw err;
+    }
+  });
+
+  R('PATCH', '/clients/:id', async ({ req, params, user }) => {
+    const f = clientFields(await readJson(req), true);
+    const [c] = await pool.query('SELECT * FROM clients WHERE company_id = ? AND id = ?', [user.companyId, Number(params.id) || 0]);
+    if (!c) throw new HttpError(404, 'Client not found.');
+    const changes = Object.fromEntries(Object.entries(f).filter(([k, v]) => String(v ?? '') !== String(k === 'active' ? Boolean(c.active) : c[k] ?? '')));
+    if (!Object.keys(changes).length) return { ok: true };
+    try {
+      await pool.query(`UPDATE clients SET ${Object.keys(changes).map((k) => `${k} = ?`).join(', ')} WHERE id = ?`, [...Object.values(changes), c.id]);
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') throw new HttpError(409, `Client code ${f.code} is already used.`);
+      throw err;
+    }
+    await audit(pool, user, 'client_updated', c.code, changes);
+    return { ok: true };
+  });
+
+  async function importClient(companyId, clientId) {
+    if (clientId === undefined || clientId === null || clientId === '') return null;
+    const [c] = await pool.query('SELECT id, code, name, active FROM clients WHERE company_id = ? AND id = ?', [companyId, Number(clientId) || 0]);
+    if (!c) throw new HttpError(400, 'Choose the client these accounts belong to.');
+    if (!c.active) throw new HttpError(400, `${c.name} is deactivated. Reactivate it in Clients first.`);
+    return c;
+  }
 
   // ---------- import ----------
 
@@ -585,7 +679,8 @@ export function mountAdmin(router, { pool, authed, readJson }) {
 
   R('POST', '/import/preview', async ({ req, user }) => {
     await requireFeature(pool, user.companyId, 'loan_import');
-    const { fileName, base64 } = await readJson(req, IMPORT_BODY);
+    const { fileName, base64, clientId } = await readJson(req, IMPORT_BODY);
+    const client = await importClient(user.companyId, clientId);
     const name = str(fileName).slice(0, 200);
     if (!name || typeof base64 !== 'string') throw new HttpError(400, 'Choose a file to upload.');
     let parsed;
@@ -598,19 +693,20 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     if (parsed.missingHeaders.length) {
       return { fileName: name, format: parsed.format, totalRows: parsed.records.length, missingHeaders: parsed.missingHeaders, rows: [], errors: [] };
     }
-    const { valid, errors } = normalise(parsed);
-    const rows = await checkAgainstDb(pool, user.companyId, valid, errors);
-    return { fileName: name, format: parsed.format, totalRows: parsed.records.length, missingHeaders: [], rows, errors };
+    const { valid, errors } = normalise(parsed, { client });
+    const rows = await checkAgainstDb(pool, user.companyId, valid, errors, { client });
+    return { fileName: name, format: parsed.format, totalRows: parsed.records.length, missingHeaders: [], rows, errors, client };
   });
 
   R('POST', '/import/commit', async ({ req, user }) => {
     await requireFeature(pool, user.companyId, 'loan_import');
-    const { fileName, loans, totalRows } = await readJson(req, COMMIT_BODY);
+    const { fileName, loans, totalRows, clientId } = await readJson(req, COMMIT_BODY);
     if (!Array.isArray(loans) || !loans.length) throw new HttpError(400, 'Nothing to import.');
+    const client = await importClient(user.companyId, clientId);
     // Re-validate everything: the browser's copy is never trusted.
     const records = loans.map((l, i) => ({ rowNo: i + 1, sheet: 'Import', structured: l }));
-    const { valid, errors } = normalise({ records, installments: [] });
-    const rows = await checkAgainstDb(pool, user.companyId, valid, errors);
+    const { valid, errors } = normalise({ records, installments: [] }, { client });
+    const rows = await checkAgainstDb(pool, user.companyId, valid, errors, { client });
     if (errors.length) {
       throw new HttpError(422, `${errors.length} loan(s) no longer pass validation (data changed since the preview?). Run the preview again.`);
     }
@@ -619,16 +715,18 @@ export function mountAdmin(router, { pool, authed, readJson }) {
       const updated = rows.length - created;
       const skipped = Math.max(0, Number(totalRows || 0) - rows.length);
       const res = await conn.query(
-        'INSERT INTO imports (company_id, at, user_code, file_name, total_rows, created, updated, skipped) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [user.companyId, now(), user.code, str(fileName).slice(0, 200) || 'upload', Number(totalRows) || rows.length, created, updated, skipped]);
+        'INSERT INTO imports (company_id, at, user_code, file_name, total_rows, created, updated, skipped, client_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [user.companyId, now(), user.code, str(fileName).slice(0, 200) || 'upload', Number(totalRows) || rows.length, created, updated, skipped, client?.id ?? null]);
       for (const r of rows) await upsertLoan(conn, user.companyId, r.loan, res.insertId);
-      await audit(conn, user, 'loans_imported', String(res.insertId), { file: fileName, created, updated, skipped });
+      await audit(conn, user, 'loans_imported', String(res.insertId), { file: fileName, created, updated, skipped, ...(client ? { client: client.code } : {}) });
       return { importId: res.insertId, created, updated, skipped };
     });
   });
 
   R('GET', '/imports', async ({ user }) => ({
-    imports: await pool.query('SELECT * FROM imports WHERE company_id = ? ORDER BY id DESC LIMIT 20', [user.companyId]),
+    imports: await pool.query(
+      'SELECT i.*, c.code AS client_code, c.name AS client_name FROM imports i LEFT JOIN clients c ON c.id = i.client_id WHERE i.company_id = ? ORDER BY i.id DESC LIMIT 20',
+      [user.companyId]),
   }));
 
   // ---------- audit ----------

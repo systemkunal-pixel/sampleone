@@ -88,10 +88,10 @@ function userForm(u) {
               <b>${esc(t(label))}</b><small>${esc(t(desc))}</small></label>`).join('')}
         </div>
       </fieldset>
-      <label class="field"><span>${t('Branch')} <span class="req">*</span></span>
-        <input class="input" name="branch" required maxlength="100" list="branch-list" value="${esc(u?.branch || (role === 'admin' ? 'Head Office' : ''))}" placeholder="${esc(t('e.g. Lucknow Rural'))}">
+      <label class="field"><span>${t('Branch')}</span>
+        <input class="input" name="branch" maxlength="100" list="branch-list" value="${esc(u?.branch || (role === 'admin' ? 'Head Office' : ''))}" placeholder="${esc(t('e.g. Lucknow Rural'))}">
         <datalist id="branch-list">${cache.branches.map((b) => `<option value="${esc(b)}">`).join('')}</datalist>
-        <span class="hint">${t('Officers only see loans of their branch; supervisors verify deposits for it.')}</span>
+        <span class="hint">${t('Leave empty for agents who work every client’s accounts in their pincodes. With a branch, officers only get that branch’s loans and supervisors verify its deposits.')}</span>
       </label>
       <div data-mail-slot>${isAdmin(role) ? mailFields(u) : ''}</div>
       <div data-home-slot>${role === 'officer' ? homeFields(u) : ''}</div>
@@ -141,9 +141,9 @@ function openUserForm(u) {
     const err = d.querySelector('[data-err]');
     const data = Object.fromEntries(new FormData(form));
     err.textContent = '';
-    const missing = ['code', 'name', 'branch'].filter((k) => !String(data[k] || '').trim());
+    const missing = ['code', 'name'].filter((k) => !String(data[k] || '').trim());
     if (missing.length) {
-      err.textContent = t('Fill in the code, name and branch.');
+      err.textContent = t('Fill in the code and name.');
       return;
     }
     const btn = d.querySelector('[type=submit]');
@@ -284,7 +284,7 @@ export async function render(el, q, alive) {
                   <span class="avatar">${esc(initials(u.name))}</span>
                   <div><div class="cell-main">${esc(u.name)}</div><div class="cell-sub">${esc(u.code)}${u.email ? ` · ${esc(u.email)}` : ''}</div></div></div></td>
                 <td data-label="${esc(t('Role'))}">${roleBadge(u.role)}</td>
-                <td data-label="${esc(t('Branch'))}">${esc(u.branch)}</td>
+                <td data-label="${esc(t('Branch'))}">${u.branch ? esc(u.branch) : `<span class="muted">${t('All clients')}</span>`}</td>
                 <td class="right num" data-label="${esc(t('Loans'))}">${u.role === 'officer' ? `<a href="#/loans?officer=${encodeURIComponent(u.code)}">${num(u.loans)}</a>` : '<span class="muted">—</span>'}</td>
                 <td data-label="${esc(t('Last sign-in'))}" title="${esc(u.lastLoginAt || '')}">${esc(ago(u.lastLoginAt))}</td>
                 <td data-label="${esc(t('Status'))}">${statusBadge(u.active)}</td>

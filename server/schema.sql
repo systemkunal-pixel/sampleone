@@ -155,7 +155,6 @@ ALTER TABLE users DROP INDEX IF EXISTS uq_users_code;
 
 ALTER TABLE loans ADD COLUMN IF NOT EXISTS company_id INT UNSIGNED NOT NULL DEFAULT 1 AFTER id;
 ALTER TABLE loans MODIFY company_id INT UNSIGNED NOT NULL;
-ALTER TABLE loans ADD UNIQUE KEY IF NOT EXISTS uq_loans_company_loan_no (company_id, loan_no);
 ALTER TABLE loans ADD KEY IF NOT EXISTS ix_loans_company_officer (company_id, officer_code);
 ALTER TABLE loans ADD KEY IF NOT EXISTS ix_loans_company_branch (company_id, branch);
 ALTER TABLE loans DROP INDEX IF EXISTS uq_loans_loan_no;
@@ -389,3 +388,42 @@ CREATE TABLE IF NOT EXISTS area_agents (
 -- v8: where each field agent lives and how far they travel, for the pincode recruitment plan.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS base_pincode CHAR(6) NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS range_km SMALLINT UNSIGNED NULL
+;
+
+-- v9: clients (the lenders whose accounts a company recovers, e.g. VFS Capital Limited), every column of a
+-- client's file kept on the account, and agents who work for every client in their pincodes.
+CREATE TABLE IF NOT EXISTS clients (
+  id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id     INT UNSIGNED NOT NULL,
+  code           VARCHAR(20)  NOT NULL,
+  name           VARCHAR(150) NOT NULL,
+  contact_name   VARCHAR(100) NULL,
+  contact_email  VARCHAR(190) NULL,
+  contact_phone  VARCHAR(20)  NULL,
+  fee_pct        DECIMAL(5,2) NULL,
+  active         TINYINT(1)   NOT NULL DEFAULT 1,
+  created_at     DATETIME     NOT NULL,
+  UNIQUE KEY uq_clients_company_code (company_id, code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS client_id INT UNSIGNED NULL;
+ALTER TABLE loans ADD KEY IF NOT EXISTS ix_loans_company_client (company_id, client_id);
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS cust_code VARCHAR(40) NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS asset_class VARCHAR(20) NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS os_amt DECIMAL(14,2) NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS int_rate DECIMAL(6,2) NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS due_since DATE NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS od_days INT NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS p_odue DECIMAL(14,2) NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS i_odue DECIMAL(14,2) NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS o_odue DECIMAL(14,2) NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS t_odue DECIMAL(14,2) NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS npa_date DATE NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS source_row TEXT NULL
+;
+-- Account numbers are unique per client (two clients may use the same numbers).
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS client_key INT UNSIGNED AS (COALESCE(client_id, 0)) PERSISTENT;
+ALTER TABLE loans ADD UNIQUE KEY IF NOT EXISTS uq_loans_company_client_loan_no (company_id, client_key, loan_no);
+ALTER TABLE loans DROP INDEX IF EXISTS uq_loans_company_loan_no
+;
+ALTER TABLE imports ADD COLUMN IF NOT EXISTS client_id INT UNSIGNED NULL

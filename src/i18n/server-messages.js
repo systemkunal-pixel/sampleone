@@ -62,6 +62,13 @@ export default [
   // server/admin-api.js
   'Choose how often to send the summary email.',
   'Choose the pincodes to depute an agent to.',
+  'Client code must be 2–20 letters, digits, - or _.',
+  "Enter the client's name.",
+  'Fee must be a percentage from 0 to 100, or empty.',
+  'Client code {code} is already used.',
+  'Client not found.',
+  'Choose the client these accounts belong to.',
+  '{name} is deactivated. Reactivate it in Clients first.',
   'Home pincode must be 6 digits.',
   'Range must be 1–200 km.',
   'Choose a branch.',

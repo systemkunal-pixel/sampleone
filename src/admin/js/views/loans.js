@@ -28,10 +28,14 @@ let officers = [];
 const officerName = (code) => officers.find((o) => o.code === code)?.name;
 
 function officerOptions(branch, current, { includeNone = true } = {}) {
-  const list = officers.filter((o) => o.active && (!branch || o.branch === branch));
+  // Officers without a branch work every client and branch.
+  const list = officers.filter((o) => o.active && (!branch || !o.branch || o.branch === branch));
   return `${includeNone ? `<option value="">${t('— Unassigned —')}</option>` : ''}${list.map((o) =>
     `<option value="${esc(o.code)}" ${o.code === current ? 'selected' : ''}>${esc(o.name)} (${esc(o.code)})${branch ? '' : ` · ${esc(o.branch)}`}</option>`).join('')}`;
 }
+
+let clients = [];
+const clientName = (id) => clients.find((c) => c.id === id)?.code;
 
 function filterBar(q, branches) {
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
@@ -40,10 +44,11 @@ function filterBar(q, branches) {
   return `
     <form class="toolbar" id="filters" role="search">
       <label class="search"><span class="sr-only">${t('Search loans')}</span>${icon('search')}<input class="input" name="q" type="search" placeholder="${esc(t('Loan no., borrower, phone'))}" value="${esc(q.get('q') || '')}"></label>
-      <select class="select" name="branch" aria-label="${esc(t('Branch'))}">${opt('', t('All branches'), branch)}${branches.map((b) => opt(b, b, branch)).join('')}</select>
+      ${clients.length ? `<select class="select" name="client" aria-label="${esc(t('Client'))}">${opt('', t('All clients'), q.get('client') || '')}${clients.map((c) => opt(String(c.id), c.name, q.get('client') || '')).join('')}${opt('none', t('Our own loans'), q.get('client') || '')}</select>` : ''}
+      ${branches.length ? `<select class="select" name="branch" aria-label="${esc(t('Branch'))}">${opt('', t('All branches'), branch)}${branches.map((b) => opt(b, b, branch)).join('')}</select>` : ''}
       <select class="select" name="officer" aria-label="${esc(t('Officer'))}">
         ${opt('', t('All officers'), officer)}${opt('__none', t('Unassigned'), officer)}
-        ${officers.filter((o) => !branch || o.branch === branch).map((o) => opt(o.code, o.active ? `${o.name} (${o.code})` : t('{name} ({code}) – inactive', { name: o.name, code: o.code }), officer)).join('')}
+        ${officers.filter((o) => !branch || !o.branch || o.branch === branch).map((o) => opt(o.code, o.active ? `${o.name} (${o.code})` : t('{name} ({code}) – inactive', { name: o.name, code: o.code }), officer)).join('')}
       </select>
       <select class="select" name="bucket" aria-label="${esc(t('Days past due'))}">${opt('', t('Any DPD'), q.get('bucket') || '')}${BUCKETS.map(([k, l]) => opt(k, t(l), q.get('bucket') || '')).join('')}${opt('closed', t('Closed'), q.get('bucket') || '')}</select>
       <select class="select" name="sort" aria-label="${esc(t('Sort by'))}">${SORTS.map(([k, l]) => opt(k, t('Sort: {label}', { label: t(l) }), q.get('sort') || 'dpd')).join('')}</select>
@@ -82,7 +87,7 @@ function table(data, q) {
       <table class="data responsive">
         <thead><tr>
           <th class="check"><input type="checkbox" data-act="page-all" ${pageAll ? 'checked' : ''} aria-label="${esc(t('Select all on this page'))}"></th>
-          ${th('loanNo', t('Loan'))}${th('borrower', t('Borrower'))}<th>${t('Branch')}</th>${th('officer', t('Officer'))}
+          ${th('loanNo', t('Loan'))}${th('borrower', t('Borrower'))}<th>${t('Client · branch')}</th>${th('officer', t('Officer'))}
           ${th('outstanding', t('Outstanding'), 'right')}${th('overdue', t('Overdue'), 'right')}${th('dpd', t('Status'))}
         </tr></thead>
         <tbody>
@@ -91,7 +96,7 @@ function table(data, q) {
               <td class="check"><input type="checkbox" data-act="row" ${selected.has(r.id) ? 'checked' : ''} aria-label="${esc(t('Select {loan}', { loan: r.loanNo }))}"></td>
               <td class="primary" data-label="${esc(t('Loan'))}"><div class="cell-main">${esc(r.loanNo)}</div><div class="cell-sub">${esc(r.product)}</div></td>
               <td data-label="${esc(t('Borrower'))}"><div>${esc(r.borrower.name)}</div><div class="cell-sub">${esc(r.borrower.phone)}${r.borrower.village ? ` · ${esc(r.borrower.village)}` : ''}${r.pincode ? ` · ${esc(r.district || '')} ${esc(r.pincode)}` : ''}</div></td>
-              <td data-label="${esc(t('Branch'))}">${esc(r.branch)}</td>
+              <td data-label="${esc(t('Client · branch'))}">${[r.clientId ? esc(clientName(r.clientId) || '') : '', esc(r.branch)].filter(Boolean).join(' · ') || '<span class="muted">—</span>'}</td>
               <td data-label="${esc(t('Officer'))}">${r.officerCode ? `${esc(r.officerName || r.officerCode)} <span class="cell-sub">${esc(r.officerCode)}</span>` : `<span class="badge warn">${t('Unassigned')}</span>`}</td>
               <td class="right num" data-label="${esc(t('Outstanding'))}">${inr(r.outstanding)}</td>
               <td class="right num" data-label="${esc(t('Overdue'))}">${r.overdue ? inr(r.overdue) : '<span class="muted">—</span>'}</td>
@@ -129,7 +134,7 @@ async function openLoan(id) {
   })();
   const depositTag = (d) => d ? ({ pending: `<span class="badge warn">${t('Pending')}</span>`, verified: `<span class="badge ok">${t('Verified')}</span>`, rejected: `<span class="badge bad">${t('Rejected')}</span>` })[d.verification] : '';
   const d = openDrawer(`
-    ${drawerHead(esc(loan.loanNo), `${esc(b.name)} · ${esc(loan.branch)}`)}
+    ${drawerHead(esc(loan.loanNo), [esc(b.name), loan.client ? esc(loan.client.name) : '', esc(loan.branch)].filter(Boolean).join(' · '))}
     <div class="drawer-body">
       <div class="mini-kpis">
         <div><span>${t('Outstanding')}</span><b>${inr(st.outstanding)}</b></div>
@@ -144,7 +149,7 @@ async function openLoan(id) {
           <select class="select" name="officer" aria-label="${esc(t('Officer'))}">${officerOptions(loan.branch, loan.officerCode)}</select>
           <button class="btn primary" type="submit">${t('Save')}</button>
         </form>
-        <div class="muted small" style="margin-top:6px">${t('Only active officers of {branch} are listed. The change shows on their phone within a minute.', { branch: esc(loan.branch) })}</div>
+        <div class="muted small" style="margin-top:6px">${t('The change shows on their phone within a minute.')}</div>
       </section>
 
       <section class="section">
@@ -169,6 +174,11 @@ async function openLoan(id) {
           <dt>${t('Last updated')}</dt><dd>${dateTime(meta.updatedAt)}</dd>
         </dl>
       </section>
+
+      ${loan.recovery || meta.sourceRow ? `<section class="section">
+        <h3>${t('As in the client’s file')}</h3>
+        <dl class="dl">${Object.entries(meta.sourceRow || {}).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+      </section>` : ''}
 
       <section class="section">
         <h3>${t('Payments ({n})', { n: loan.payments.length })}</h3>
@@ -217,13 +227,15 @@ async function openLoan(id) {
 // ---------- page ----------
 
 export async function render(el, q, alive) {
-  const key = ['q', 'branch', 'officer', 'bucket', 'pincode'].map((k) => q.get(k) || '').join('|');
+  const key = ['q', 'client', 'branch', 'officer', 'bucket', 'pincode'].map((k) => q.get(k) || '').join('|');
   if (key !== lastKey) selected = new Set(); // a different result set: drop the selection
   lastKey = key;
   const params = new URLSearchParams(q);
   params.set('pageSize', q.get('pageSize') || '25');
-  const [data, { users }, { branches }] = await Promise.all([api(`loans?${params}`), api('users'), api('branches')]);
+  const [data, { users }, br, cl] = await Promise.all([api(`loans?${params}`), api('users'), api('branches'), api('clients')]);
   if (!alive()) return;
+  const branches = br.branches.filter(Boolean);
+  clients = cl.clients;
   officers = users.filter((u) => u.role === 'officer');
 
   const draw = () => {

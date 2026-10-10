@@ -390,12 +390,26 @@ export const TOPICS = [
     tips: ['Admin sessions end after 12 hours or when you close the browser.'],
   },
   {
+    id: 'clients', category: 'howto', audience: ['admin'],
+    title: 'Clients: whose accounts you recover',
+    summary: 'Each lender (e.g. VFS Capital Limited) is a client; its accounts are imported, reported and billed separately.',
+    steps: [
+      'Open <b>Clients</b> → <b>Add client</b>. Give a short code (e.g. VFS), the full name, the billing contact and, if you bill a percentage, the fee %.',
+      'In <b>Import loans</b>, choose the client under <b>Accounts belong to</b>, then upload that client’s file as it is.',
+      'Every column of the file is kept on each account (see <b>As in the client’s file</b> when you open an account in <b>Loans</b>).',
+    ],
+    tips: [
+      'Two clients may use the same account numbers: accounts are matched within each client.',
+      'Agents work every client’s accounts in their pincodes. Use the client filter in <b>Loans</b> and <b>Areas</b> to look at one client.',
+    ],
+  },
+  {
     id: 'areas', category: 'howto', audience: ['admin'],
     title: 'Depute agents by pincode',
     summary: 'Recovery lists come by state, district and pincode; give each pincode an agent.',
     steps: [
       'Import the lender’s list in <b>Import loans</b> (the VFS borrower file uploads as it is). Each account keeps its state, district and pincode.',
-      'In <b>Users</b>, add each agent as a <b>Field officer</b> with the same branch as the accounts (for VFS: <b>VFS</b>).',
+      'In <b>Users</b>, add each agent as a <b>Field officer</b> with an empty branch, so they work every client’s accounts in their pincodes.',
       'Open <b>Areas</b>, expand a state and a district, and click <b>Depute agent</b> on a pincode. Or tick several pincodes (or <b>Select all</b> in a district) and use <b>Depute agent</b> at the top.',
       'Choose the agent and whether to move all accounts there or only the unassigned ones, then <b>Save</b>. The accounts appear on the agent’s phone within a minute.',
     ],

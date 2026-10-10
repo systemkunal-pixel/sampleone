@@ -38,7 +38,14 @@ export const LOAN_COLUMNS = {
   lender: ['pi name', 'lender', 'lender name', 'client', 'client name', 'institution'],
   assetClass: ['asset class', 'asset classification'],
   interestRate: ['int rate', 'interest rate', 'roi', 'rate of interest'],
+  custCode: ['cust cd', 'cust code', 'customer code', 'customer id', 'cust id', 'cif', 'cif no'],
+  odDays: ['od days', 'overdue days', 'days overdue', 'dpd', 'days past due'],
+  pOdue: ['p odue', 'principal overdue', 'overdue principal'],
+  iOdue: ['i odue', 'interest overdue', 'overdue interest'],
+  oOdue: ['o odue', 'other overdue', 'charges overdue', 'other charges'],
+  npaDate: ['npa dt', 'npa date', 'date of npa'],
 };
+const MAX_SOURCE_COLUMNS = 80;
 export const INSTALLMENT_COLUMNS = {
   loanNo: LOAN_COLUMNS.loanNo,
   no: ['installment no', 'instalment no', 'emi no', 'no', 'sr no', 'installment number'],
@@ -172,9 +179,59 @@ function tableToRecords(table, columns, sheetName) {
     for (const [field, col] of Object.entries(map)) values[field] = r[col];
     // An officer column that is present but blank means "unassigned"; no column means "leave as is".
     if (map.officerCode !== undefined && values.officerCode == null) values.officerCode = '';
-    records.push({ rowNo: i + 1, sheet: sheetName, values });
+    records.push({ rowNo: i + 1, sheet: sheetName, values, raw: rawRow(headers, r) });
   }
   return { records, map, headers };
+}
+
+/** Every column of a row as the file had it (heading → value), kept on the account for reports. */
+function rawRow(headers, r) {
+  const out = {};
+  headers.forEach((h, i) => {
+    if (!h || Object.keys(out).length >= MAX_SOURCE_COLUMNS) return;
+    let v = r[i];
+    if (v == null || v === '') return;
+    if (v instanceof Date) v = Number.isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+    else if (typeof v === 'string') v = text(v, 300);
+    else if (typeof v !== 'number' && typeof v !== 'boolean') v = text(v, 300);
+    if (v != null && v !== '') out[h] = v;
+  });
+  return out;
+}
+
+/** The source row sent back by the browser at commit: plain heading → short value pairs only. */
+function cleanSourceRow(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(o).slice(0, MAX_SOURCE_COLUMNS)) {
+    if (['number', 'boolean'].includes(typeof v)) out[text(k, 100)] = v;
+    else if (typeof v === 'string') out[text(k, 100)] = text(v, 300);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+const num = (v) => {
+  const n = parseAmount(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+/** Recovery-list details kept on the account (see RECOVERY_COLUMNS in db.js); unreadable values are left out. */
+function parseRecovery(src) {
+  const out = {
+    custCode: text(src.custCode, 40) || null,
+    assetClass: text(src.assetClass, 20).toUpperCase() || null,
+    osAmt: num(src.osAmt),
+    intRate: num(src.intRate ?? src.interestRate),
+    dueSince: parseDate(src.dueSince),
+    odDays: Number.isInteger(Number(src.odDays)) && src.odDays !== '' && src.odDays != null ? Number(src.odDays) : null,
+    pOdue: num(src.pOdue),
+    iOdue: num(src.iOdue),
+    oOdue: num(src.oOdue),
+    tOdue: num(src.tOdue ?? src.overdue),
+    npaDate: parseDate(src.npaDate),
+  };
+  for (const k of Object.keys(out)) if (out[k] == null) delete out[k];
+  return Object.keys(out).length ? out : null;
 }
 
 async function readWorkbook(buf) {
@@ -275,7 +332,7 @@ export const parsePincode = (v) => {
  * Recovery list row → the same values as a loan row: one installment of the overdue amount, due since the
  * date given. Nothing here rejects a row: gaps are filled as well as possible and reported as warnings.
  */
-function recoveryValues(v, warnings) {
+function recoveryValues(v, warnings, { client } = {}) {
   const os = parseAmount(v.principal);
   let overdue = parseAmount(v.overdue);
   if (!(overdue > 0)) {
@@ -292,7 +349,9 @@ function recoveryValues(v, warnings) {
   return {
     ...v,
     source: 'recovery',
-    branch: text(v.branch, 100) || lender || 'Recovery',
+    osAmt: v.principal,
+    // Importing for a client: the branch is the client's own branch, only when the file gives one.
+    branch: text(v.branch, 100) || (client ? '' : lender || 'Recovery'),
     product: text(v.product, 60) || [lender, text(v.assetClass, 10).toUpperCase(), rate > 0 ? `${rate}%` : ''].filter(Boolean).join(' · ') || 'Recovery',
     principal: os > 0 ? os : overdue,
     emi: overdue,
@@ -307,17 +366,17 @@ const isoToday = () => {
 };
 
 /** Turns one raw record into a loan, or a list of problems. */
-function normaliseRecord(rec, instByLoan) {
+function normaliseRecord(rec, instByLoan, opts = {}) {
   const errors = [];
   // Problems that don't stop the import: the row is kept with the best value available.
   const warnings = [];
   let v = rec.structured ? structuredToValues(rec.structured) : rec.values;
-  if (!rec.structured && v.overdue !== undefined && v.emi === undefined) v = recoveryValues(v, warnings);
+  if (!rec.structured && v.overdue !== undefined && v.emi === undefined) v = recoveryValues(v, warnings, opts);
   const recovery = v.source === 'recovery';
   const loanNo = text(v.loanNo, 40);
   if (!loanNo) errors.push('Loan number is missing.');
   const branch = text(v.branch, 100);
-  if (!branch) errors.push('Branch is missing.');
+  if (!branch && !opts.client) errors.push('Branch is missing.');
   let name = text(v.name, 100);
   if (!name) {
     name = 'Name not given';
@@ -395,6 +454,15 @@ function normaliseRecord(rec, instByLoan) {
       ...(recovery ? { source: 'recovery' } : {}),
       id, loanNo, branch, ...(officerCode !== undefined ? { officerCode } : {}), product: text(v.product, 60) || 'Loan', principal, emi, disbursedOn,
       state: text(v.state, 60) || null, district: text(v.district, 100) || null, pincode,
+      ...(opts.client ? { clientId: opts.client.id } : {}),
+      ...(() => {
+        const r = parseRecovery(rec.structured ? rec.structured.recovery || {} : v);
+        return r ? { recovery: r } : {};
+      })(),
+      ...(() => {
+        const s = rec.structured ? cleanSourceRow(rec.structured.sourceRow) : rec.raw && Object.keys(rec.raw).length ? rec.raw : null;
+        return s ? { sourceRow: s } : {};
+      })(),
       borrower: {
         name, phone, business: text(v.business, 100), address: text(v.address, 200), village: text(v.village, 100),
         lat, lng, guarantor: gName || gPhone ? { name: gName, phone: gPhone || '' } : null,
@@ -416,7 +484,7 @@ function structuredToValues(o) {
 }
 
 /** Normalises every record; returns valid loans and per-row errors (including duplicates within the file). */
-export function normalise({ records, installments }) {
+export function normalise({ records, installments }, opts = {}) {
   const instByLoan = new Map();
   for (const r of installments) {
     const k = key(r.values.loanNo);
@@ -428,7 +496,7 @@ export function normalise({ records, installments }) {
   const errors = [];
   const seen = new Map();
   for (const rec of records) {
-    const out = normaliseRecord(rec, instByLoan);
+    const out = normaliseRecord(rec, instByLoan, opts);
     if (out.errors) {
       errors.push(out);
       continue;
@@ -448,7 +516,10 @@ export function normalise({ records, installments }) {
  * Checks normalised loans against the database: officer assignment, and whether each loan is new or
  * an update (matched by loan number). Moves failures into errors and adds warnings.
  */
-export async function checkAgainstDb(conn, companyId, valid, errors) {
+/** An officer with no branch works every client and branch (recovery agents); otherwise only their own branch. */
+export const officerFits = (o, branch) => !o.branch || o.branch === branch;
+
+export async function checkAgainstDb(conn, companyId, valid, errors, { client = null } = {}) {
   const officers = new Map(
     (await conn.query("SELECT code, branch, active FROM users WHERE company_id = ? AND role = 'officer'", [companyId])).map((o) => [o.code, o]));
   const existing = new Map();
@@ -458,11 +529,12 @@ export async function checkAgainstDb(conn, companyId, valid, errors) {
     const chunk = nos.slice(i, i + 1000);
     const rows = await conn.query(
       `SELECT l.id, l.loan_no, l.installments, l.officer_code, l.branch, (SELECT COUNT(*) FROM payments p WHERE p.loan_id = l.id) AS payments
-       FROM loans l WHERE l.company_id = ? AND l.loan_no IN (?)`, [companyId, chunk]);
+       FROM loans l WHERE l.company_id = ? AND l.client_id <=> ? AND l.loan_no IN (?)`, [companyId, client?.id ?? null, chunk]);
     for (const r of rows) existing.set(r.loan_no.toLowerCase(), r);
   }
-  // Loan ids are global, so a new loan's id gets the company prefix ("7-MFL-25-2001").
-  const prefix = `${companyId}-`;
+  // Loan ids are global, so a new loan's id gets the company prefix ("7-MFL-25-2001"), and a client's
+  // loan the client too ("7-3-D000664J"), since two clients may use the same account numbers.
+  const prefix = client ? `${companyId}-${client.id}-` : `${companyId}-`;
   for (const v of valid) {
     if (!existing.has(v.loan.loanNo.toLowerCase()) && !v.loan.id.startsWith(prefix)) v.loan.id = (prefix + v.loan.id).slice(0, 40);
   }
@@ -472,11 +544,11 @@ export async function checkAgainstDb(conn, companyId, valid, errors) {
     for (const r of rows) existingIds.set(r.id, r.company_id === companyId ? r.loan_no : null);
   }
   // Agents deputed to pincodes take new accounts in their pincode when the file names no officer.
-  const agents = new Map((await conn.query('SELECT branch, pincode, officer_code FROM area_agents WHERE company_id = ?', [companyId]))
-    .map((a) => [`${a.branch}|${a.pincode}`, a.officer_code]));
+  const agents = new Map((await conn.query('SELECT pincode, officer_code FROM area_agents WHERE company_id = ?', [companyId]))
+    .map((a) => [a.pincode, a.officer_code]));
   const usable = (code, branch) => {
     const o = officers.get(code);
-    return o && o.active && o.branch === branch;
+    return o && o.active && officerFits(o, branch);
   };
   const ok = [];
   for (const v of valid) {
@@ -485,14 +557,14 @@ export async function checkAgainstDb(conn, companyId, valid, errors) {
     const warnings = [...(v.warnings || [])];
     const match = existing.get(loan.loanNo.toLowerCase());
     if (loan.officerCode === undefined) {
-      const keep = match?.officer_code && match.branch === loan.branch && usable(match.officer_code, loan.branch) ? match.officer_code : null;
-      const agent = agents.get(`${loan.branch}|${loan.pincode}`);
+      const keep = match?.officer_code && usable(match.officer_code, loan.branch) ? match.officer_code : null;
+      const agent = agents.get(loan.pincode);
       loan.officerCode = keep || (agent && usable(agent, loan.branch) ? agent : null);
       if (!keep && loan.officerCode) warnings.push(`Assigned to ${loan.officerCode}, the agent for pincode ${loan.pincode}.`);
     }
     if (match) {
       loan.loanNo = match.loan_no; // keep stored spelling
-      if (![match.id, loanIdFor(loan.loanNo), match.id.replace(prefix, '')].includes(loan.id)) problems.push(`Loan ${loan.loanNo} already exists with ID ${match.id}.`);
+      if (![match.id, loanIdFor(loan.loanNo), match.id.replace(prefix, ''), match.id.replace(`${companyId}-`, '')].includes(loan.id)) problems.push(`Loan ${loan.loanNo} already exists with ID ${match.id}.`);
       loan.id = match.id;
       if (match.payments > 0 && JSON.stringify(JSON.parse(match.installments)) !== JSON.stringify(loan.installments)) {
         warnings.push(`Repayment schedule changes; ${match.payments} recorded payment(s) are kept and re-allocated.`);
@@ -505,7 +577,7 @@ export async function checkAgainstDb(conn, companyId, valid, errors) {
       const o = officers.get(loan.officerCode);
       if (!o) problems.push(`Officer ${loan.officerCode} does not exist.`);
       else if (!o.active) problems.push(`Officer ${loan.officerCode} is deactivated.`);
-      else if (o.branch !== loan.branch) problems.push(`Officer ${loan.officerCode} belongs to ${o.branch}, not ${loan.branch}.`);
+      else if (!officerFits(o, loan.branch)) problems.push(`Officer ${loan.officerCode} belongs to ${o.branch}, not ${loan.branch}.`);
     } else {
       warnings.push('No officer assigned — the loan will be unassigned.');
     }

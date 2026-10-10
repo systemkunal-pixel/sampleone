@@ -35,6 +35,8 @@ const COLUMNS = [
 ];
 
 let state = { step: 'upload', preview: null, result: null };
+let clientId = null; // remembered while the console is open; '' = our own loans
+let clients = [];
 
 function steps() {
   const order = ['upload', 'review', 'done'];
@@ -44,6 +46,18 @@ function steps() {
     `<li class="step ${i === at ? 'active' : i < at ? 'done' : ''}" ${i === at ? 'aria-current="step"' : ''}><i>${i < at ? '✓' : i + 1}</i>${labels[s]}</li>`).join('')}</ol>`;
 }
 
+function clientPicker() {
+  const active = clients.filter((c) => c.active);
+  return `
+    <label class="field" style="margin-bottom:14px"><span>${t('Accounts belong to')} <span class="req">*</span></span>
+      <select class="select" id="client">
+        ${active.map((c) => `<option value="${c.id}" ${String(c.id) === String(clientId) ? 'selected' : ''}>${esc(c.name)} (${esc(c.code)})</option>`).join('')}
+        <option value="" ${clientId === '' ? 'selected' : ''}>${t('Our own loans (no client)')}</option>
+      </select>
+      <span class="hint">${active.length ? t('Each client’s accounts are kept and billed separately. Add clients in Clients.') : `${t('No clients yet.')} <a href="#/clients">${t('Add a client')}</a>`}</span>
+    </label>`;
+}
+
 function uploadStep(history) {
   return `
     <div class="grid two">
@@ -51,6 +65,7 @@ function uploadStep(history) {
         <div class="card-head"><div><h2>${t('Upload loan file')}</h2><p>${t('Excel (.xlsx), CSV or JSON · up to 10 MB / 20,000 loans')}</p></div>
           <button class="btn sm" data-act="template">${icon('download')} ${t('Excel template')}</button></div>
         <div class="card-body">
+          ${clientPicker()}
           <label class="dropzone" id="dropzone" tabindex="0">
             ${icon('sheet')}
             <b>${t('Drop your file here, or click to browse')}</b>
@@ -76,10 +91,10 @@ function historyCard(history) {
     <section class="card" style="margin-top:16px">
       <div class="card-head"><div><h2>${t('Import history')}</h2><p>${t('Last 20 imports')}</p></div></div>
       ${history.length ? `<div class="table-wrap"><table class="data responsive">
-        <thead><tr><th>${t('When')}</th><th>${t('File')}</th><th>${t('By')}</th><th class="right">${t('Rows')}</th><th class="right">${t('New')}</th><th class="right">${t('Updated')}</th><th class="right">${t('Skipped')}</th></tr></thead>
+        <thead><tr><th>${t('When')}</th><th>${t('File')}</th><th>${t('Client')}</th><th>${t('By')}</th><th class="right">${t('Rows')}</th><th class="right">${t('New')}</th><th class="right">${t('Updated')}</th><th class="right">${t('Skipped')}</th></tr></thead>
         <tbody>${history.map((h) => `<tr>
           <td class="primary" data-label="${esc(t('When'))}"><div class="cell-main">${dateTime(h.at)}</div></td>
-          <td data-label="${esc(t('File'))}">${esc(h.file_name)}</td><td data-label="${esc(t('By'))}">${esc(h.user_code)}</td>
+          <td data-label="${esc(t('File'))}">${esc(h.file_name)}</td><td data-label="${esc(t('Client'))}">${h.client_code ? esc(h.client_code) : '<span class="muted">—</span>'}</td><td data-label="${esc(t('By'))}">${esc(h.user_code)}</td>
           <td class="right num" data-label="${esc(t('Rows'))}">${num(h.total_rows)}</td><td class="right num" data-label="${esc(t('New'))}">${num(h.created)}</td>
           <td class="right num" data-label="${esc(t('Updated'))}">${num(h.updated)}</td><td class="right num" data-label="${esc(t('Skipped'))}">${h.skipped ? `<span class="badge warn">${num(h.skipped)}</span>` : '0'}</td>
         </tr>`).join('')}</tbody></table></div>` : emptyState(t('No imports yet'), t('Your imports will be listed here.'), 'upload')}
@@ -104,6 +119,7 @@ function reviewStep() {
   const warned = p.rows.filter((r) => r.warnings.length);
   const tile = (label, value, cls = '') => `<div class="kpi ${cls}"><div class="label">${label}</div><div class="value">${num(value)}</div></div>`;
   return `
+    ${p.client ? `<div class="info-box" style="margin-bottom:16px">${icon('building')} ${t('Importing for client {client}.', { client: `<b>${esc(p.client.name)}</b>` })}</div>` : ''}
     <section class="stat-row" aria-label="${esc(t('Import summary'))}">
       ${tile(t('Rows in file'), p.totalRows)}
       ${tile(t('New loans'), creates)}
@@ -136,7 +152,7 @@ function reviewStep() {
             <td data-label="${esc(t('Action'))}">${r.action === 'create' ? `<span class="badge ok">${t('New')}</span>` : `<span class="badge info">${t('Update')}</span>`}</td>
             <td class="primary" data-label="${esc(t('Loan No'))}"><div class="cell-main">${esc(l.loanNo)}</div>${r.warnings.map((w) => `<div class="cell-sub" style="color:var(--warn)">⚠ ${esc(tr(w))}</div>`).join('')}</td>
             <td data-label="${esc(t('Borrower'))}">${esc(l.borrower.name)}<div class="cell-sub">${esc(l.borrower.phone)}</div></td>
-            <td data-label="${esc(t('Branch'))}">${esc(l.branch)}</td>
+            <td data-label="${esc(t('Branch'))}">${l.branch ? esc(l.branch) : '<span class="muted">—</span>'}${l.pincode ? `<div class="cell-sub">${esc(l.district || '')} ${esc(l.pincode)}</div>` : ''}</td>
             <td data-label="${esc(t('Officer'))}">${l.officerCode ? esc(l.officerCode) : `<span class="badge warn">${t('Unassigned')}</span>`}</td>
             <td class="right num" data-label="${esc(t('Principal'))}">${inr(l.principal)}</td>
             <td class="right num" data-label="${esc(t('EMI'))}">${inr(l.emi)}</td>
@@ -186,8 +202,11 @@ const toBase64 = (file) => new Promise((resolve, reject) => {
 
 export async function render(el, q, alive) {
   if (state.step === 'done') state = { step: 'upload', preview: null, result: null };
-  const { imports } = await api('imports');
+  const [{ imports }, cl] = await Promise.all([api('imports'), api('clients')]);
   if (!alive()) return;
+  clients = cl.clients;
+  if (clientId && !clients.some((c) => String(c.id) === String(clientId) && c.active)) clientId = null;
+  if (clientId === null) clientId = String(clients.find((c) => c.active)?.id ?? '');
 
   const draw = () => {
     el.innerHTML = `
@@ -225,7 +244,7 @@ export async function render(el, q, alive) {
     const zone = el.querySelector('#dropzone');
     zone.innerHTML = `${icon('refresh')}<b>${t('Checking {file}…', { file: esc(file.name) })}</b><span class="muted small">${t('Validating every row against officers and existing loans.')}</span>`;
     try {
-      state.preview = await api('import/preview', { method: 'POST', body: { fileName: file.name, base64: await toBase64(file) } });
+      state.preview = await api('import/preview', { method: 'POST', body: { fileName: file.name, base64: await toBase64(file), clientId: clientId || null } });
       state.step = 'review';
       draw();
       window.scrollTo(0, 0);
@@ -236,7 +255,10 @@ export async function render(el, q, alive) {
   }
 
   draw();
-  el.onchange = (e) => e.target.id === 'file' && e.target.files[0] && upload(e.target.files[0]);
+  el.onchange = (e) => {
+    if (e.target.id === 'client') clientId = e.target.value;
+    if (e.target.id === 'file' && e.target.files[0]) upload(e.target.files[0]);
+  };
   el.onclick = async (e) => {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'template') download('import/template', 'loan-import-template.xlsx').catch((ex) => toast(tr(ex.message), 'bad'));
@@ -261,7 +283,7 @@ export async function render(el, q, alive) {
       btn.textContent = t('Importing…');
       try {
         state.result = await api('import/commit', {
-          method: 'POST', body: { fileName: p.fileName, totalRows: p.totalRows, loans: p.rows.map((r) => r.loan) },
+          method: 'POST', body: { fileName: p.fileName, totalRows: p.totalRows, clientId: p.client?.id ?? null, loans: p.rows.map((r) => r.loan) },
         });
         state.step = 'done';
         const done = state.result.created + state.result.updated;
