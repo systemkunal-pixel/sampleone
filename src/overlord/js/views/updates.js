@@ -74,7 +74,7 @@ export async function render(el, query, rest, alive) {
     <details class="card" style="margin-top:16px"><summary class="card-head" style="cursor:pointer"><h2>${icon('help')} How updating works, and what happens when a build is bad</h2></summary>
       <div class="card-body guide">
         <ol>
-          <li><b>Build</b> on the release PC: <code>node scripts/patch.js build</code> makes <code>loandesk-&lt;version&gt;.ldpatch</code>, signed with the private key that only that PC holds.</li>
+          <li><b>Build</b> on the release PC: <code>node scripts/patch.js build</code> makes <code>dist/loandesk-makes <code>loandesk-&lt;version&gt;.ldpatch</code>lt;versionmakes <code>loandesk-&lt;version&gt;.ldpatch</code>gt;.ldpatch</code>, signed with the private key that only that PC holds.</li>
           <li><b>Verify</b> here checks the signature against this server's <code>UPDATE_PUBLIC_KEY</code>, that it is LoanDesk and newer than ${esc(d.version)}, and every file's checksum. Nothing is written to the app.</li>
           <li><b>Stage</b> asks you to type the version, then queues it. Within 10 seconds the updater agent backs up the code (and the database if the update changes it), stops the site, installs, and starts the new version.</li>
           <li>If the new version doesn't answer as healthy within two minutes, the agent puts back the old files and database and starts the old version. The history below says <b>Rolled back</b> and why.</li>

@@ -195,7 +195,7 @@ npm run admin -- list-companies
 It also installs signed update packages (`.ldpatch`):
 
 1. **Once, on the release PC:** run `node scripts/patch.js keygen`. This saves your private signing key to `~/.loandesk/update-signing-key.pem` (on Windows, `%USERPROFILE%\.loandesk\`) and prints a line `UPDATE_PUBLIC_KEY=…`. Add that line to each server's `.env` and restart LoanDesk; re-running the installer keeps it. Keep the private key off servers and out of git, and back it up.
-2. **For each release:** raise `version` in `package.json`, then run `node scripts/patch.js build --notes "what changed"`. This writes `loandesk-<version>.ldpatch`, a complete signed copy of the app code. It contains no `.env` and no data.
+2. **For each release:** raise `version` in `package.json`, then run `node scripts/patch.js build --notes "what changed"`. This writes `dist/loandesk-<version>.ldpatch` (the `dist` folder is created if needed), a complete signed copy of the app code. It contains no `.env` and no data.
 3. **In the console:** choose the file, then **Verify**. Verify checks the signature, that the package is LoanDesk and newer than the running version, every file's checksum, and safe file paths. Nothing is installed yet.
 4. **Stage**, typing the version to confirm. Within 10 seconds the **updater agent** takes over:
    - it backs up the code, and the whole database if the update changes the schema;

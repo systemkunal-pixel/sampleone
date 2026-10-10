@@ -7,4 +7,5 @@ server.log
 updates/
 backups/
 *.ldpatch
+dist/
 *.pem

@@ -3,7 +3,7 @@
 //
 //   node scripts/patch.js keygen                 once: creates your private signing key and prints the
 //                                                public key line to put in each server's .env
-//   node scripts/patch.js build [--notes "…"]    builds loandesk-<version>.ldpatch from this folder
+//   node scripts/patch.js build [--notes "…"]    builds dist/loandesk-<version>.ldpatch from this folder
 //   node scripts/patch.js verify <file.ldpatch>  checks a package against UPDATE_PUBLIC_KEY (or --pub)
 //
 // The private key never goes into the repository or onto a server. Default location:
@@ -42,7 +42,9 @@ try {
     if (!existsSync(keyFile)) throw new Error(`No signing key at ${keyFile}. Run: node scripts/patch.js keygen`);
     const buf = buildPatch(ROOT, readFileSync(keyFile, 'utf8'), { notes: values.notes || '' });
     const { version } = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-    const out = resolve(values.out || ROOT, `loandesk-${version}.ldpatch`);
+    const outDir = resolve(values.out || join(ROOT, 'dist'));
+    mkdirSync(outDir, { recursive: true });
+    const out = join(outDir, `loandesk-${version}.ldpatch`);
     writeFileSync(out, buf);
     console.log(`Built ${out} (${(buf.length / 1024 / 1024).toFixed(1)} MB, version ${version}).`);
     console.log('Upload it in the overlord console: Update & diagnostics → Verify → Stage.');
