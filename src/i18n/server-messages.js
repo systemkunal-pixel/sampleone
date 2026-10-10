@@ -101,7 +101,7 @@ export default [
   'Loan number is missing.',
   'Branch is missing.',
   'Borrower name is missing.',
-  'Phone "{phone}" is not a valid 10-digit mobile number.',
+  'Phone "{phone}" is not a valid 10-digit mobile number; imported as given.',
   'Principal must be an amount greater than 0.',
   'EMI must be an amount greater than 0.',
   'Disbursement date "{date}" is not a valid date (use DD-MM-YYYY).',
@@ -127,9 +127,10 @@ export default [
   'Officer {code} is deactivated.',
   'Officer {code} belongs to {branch}, not {otherBranch}.',
   'No officer assigned — the loan will be unassigned.',
-  'Overdue amount must be greater than 0.',
-  'Due-since date "{date}" is not a valid date.',
-  'Due-since date "" is not a valid date.',
+  'No overdue amount: the outstanding amount is used.',
+  'No overdue or outstanding amount: imported with nothing due.',
+  'Due-since date "{date}" is not a valid date: today is used.',
+  'Due-since date "" is not a valid date: today is used.',
   'Assigned to {code}, the agent for pincode {pincode}.',
 
   // src/js/logic.js

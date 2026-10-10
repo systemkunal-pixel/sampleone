@@ -271,44 +271,68 @@ export const parsePincode = (v) => {
   return /^[1-9]\d{5}$/.test(d) ? d : null;
 };
 
-/** Recovery list row → the same values as a loan row: one installment of the overdue amount, due since the date given. */
-function recoveryValues(v, errors) {
-  const overdue = parseAmount(v.overdue);
-  if (!(overdue > 0)) errors.push('Overdue amount must be greater than 0.');
-  const dueSince = parseDate(v.dueSince);
-  if (!dueSince) errors.push(`Due-since date "${text(v.dueSince instanceof Date ? '' : v.dueSince, 20)}" is not a valid date.`);
-  const lender = lenderShort(v.lender);
+/**
+ * Recovery list row → the same values as a loan row: one installment of the overdue amount, due since the
+ * date given. Nothing here rejects a row: gaps are filled as well as possible and reported as warnings.
+ */
+function recoveryValues(v, warnings) {
   const os = parseAmount(v.principal);
+  let overdue = parseAmount(v.overdue);
+  if (!(overdue > 0)) {
+    overdue = os > 0 ? os : 0;
+    warnings.push(overdue ? 'No overdue amount: the outstanding amount is used.' : 'No overdue or outstanding amount: imported with nothing due.');
+  }
+  let dueSince = parseDate(v.dueSince);
+  if (!dueSince) {
+    dueSince = isoToday();
+    warnings.push(`Due-since date "${text(v.dueSince instanceof Date ? '' : v.dueSince, 20)}" is not a valid date: today is used.`);
+  }
+  const lender = lenderShort(v.lender);
   const rate = Number(v.interestRate);
   return {
     ...v,
+    source: 'recovery',
     branch: text(v.branch, 100) || lender || 'Recovery',
     product: text(v.product, 60) || [lender, text(v.assetClass, 10).toUpperCase(), rate > 0 ? `${rate}%` : ''].filter(Boolean).join(' · ') || 'Recovery',
     principal: os > 0 ? os : overdue,
     emi: overdue,
     disbursedOn: dueSince,
-    recoveryInstallments: overdue > 0 && dueSince ? [{ no: 1, dueDate: dueSince, amount: overdue }] : null,
+    recoveryInstallments: overdue > 0 ? [{ no: 1, dueDate: dueSince, amount: overdue }] : [],
   };
 }
+
+const isoToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 
 /** Turns one raw record into a loan, or a list of problems. */
 function normaliseRecord(rec, instByLoan) {
   const errors = [];
+  // Problems that don't stop the import: the row is kept with the best value available.
+  const warnings = [];
   let v = rec.structured ? structuredToValues(rec.structured) : rec.values;
-  const recovery = !rec.structured && v.overdue !== undefined && v.emi === undefined;
-  if (recovery) v = recoveryValues(v, errors);
+  if (!rec.structured && v.overdue !== undefined && v.emi === undefined) v = recoveryValues(v, warnings);
+  const recovery = v.source === 'recovery';
   const loanNo = text(v.loanNo, 40);
   if (!loanNo) errors.push('Loan number is missing.');
   const branch = text(v.branch, 100);
   if (!branch) errors.push('Branch is missing.');
-  const name = text(v.name, 100);
-  if (!name) errors.push('Borrower name is missing.');
-  const phone = parsePhone(v.phone);
-  if (!phone) errors.push(`Phone "${text(v.phone, 20) || '—'}" is not a valid 10-digit mobile number.`);
+  let name = text(v.name, 100);
+  if (!name) {
+    name = 'Name not given';
+    warnings.push('Borrower name is missing.');
+  }
+  // A wrong or missing mobile number never stops the import: the number is kept as given, to be corrected later.
+  let phone = parsePhone(v.phone);
+  if (!phone) {
+    phone = text(v.phone, 20).replace(/[^\d+]/g, '');
+    warnings.push(`Phone "${text(v.phone, 20) || '—'}" is not a valid 10-digit mobile number; imported as given.`);
+  }
   const principal = parseAmount(v.principal);
-  if (!(principal > 0)) errors.push('Principal must be an amount greater than 0.');
+  if (!(principal > 0) && !(recovery && principal === 0)) errors.push('Principal must be an amount greater than 0.');
   const emi = parseAmount(v.emi);
-  if (!(emi > 0)) errors.push('EMI must be an amount greater than 0.');
+  if (!(emi > 0) && !(recovery && emi === 0)) errors.push('EMI must be an amount greater than 0.');
   const disbursedOn = parseDate(v.disbursedOn);
   if (!disbursedOn) errors.push(`Disbursement date "${text(v.disbursedOn instanceof Date ? '' : v.disbursedOn, 20)}" is not a valid date (use DD-MM-YYYY).`);
   // undefined: the file has no officer column (keep the current officer, or the pincode's agent for a new loan).
@@ -320,17 +344,22 @@ function normaliseRecord(rec, instByLoan) {
   let lat = v.lat === '' || v.lat == null ? null : Number(v.lat);
   let lng = v.lng === '' || v.lng == null ? null : Number(v.lng);
   if ((lat != null || lng != null) && !(Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) {
-    errors.push('Latitude/longitude are not valid coordinates.');
+    warnings.push('Latitude/longitude are not valid coordinates.');
     lat = lng = null;
   }
   const gName = text(v.guarantorName, 100);
-  const gPhone = v.guarantorPhone ? parsePhone(v.guarantorPhone) : null;
-  if (v.guarantorPhone && !gPhone) errors.push('Guarantor phone is not a valid 10-digit mobile number.');
+  let gPhone = v.guarantorPhone ? parsePhone(v.guarantorPhone) : null;
+  if (v.guarantorPhone && !gPhone) {
+    gPhone = text(v.guarantorPhone, 20).replace(/[^\d+]/g, '');
+    warnings.push('Guarantor phone is not a valid 10-digit mobile number.');
+  }
 
   // Installments: explicit rows win; otherwise generate from tenure + first due date.
   let installments = [];
   const explicit = rec.structured?.installments ?? v.recoveryInstallments ?? instByLoan.get(key(loanNo));
-  if (explicit?.length) {
+  if (recovery && !explicit?.length) {
+    installments = []; // nothing due
+  } else if (explicit?.length) {
     explicit.forEach((r, i) => {
       const dueDate = parseDate(r.dueDate);
       const amount = parseAmount(r.amount);
@@ -361,7 +390,9 @@ function normaliseRecord(rec, instByLoan) {
   return {
     rowNo: rec.rowNo,
     sheet: rec.sheet,
+    warnings,
     loan: {
+      ...(recovery ? { source: 'recovery' } : {}),
       id, loanNo, branch, ...(officerCode !== undefined ? { officerCode } : {}), product: text(v.product, 60) || 'Loan', principal, emi, disbursedOn,
       state: text(v.state, 60) || null, district: text(v.district, 100) || null, pincode,
       borrower: {
@@ -376,7 +407,7 @@ function normaliseRecord(rec, instByLoan) {
 function structuredToValues(o) {
   const b = o.borrower || {};
   return {
-    loanNo: o.loanNo, id: o.id, branch: o.branch, officerCode: o.officerCode, product: o.product,
+    loanNo: o.loanNo, id: o.id, branch: o.branch, officerCode: o.officerCode, product: o.product, source: o.source,
     state: o.state, district: o.district, pincode: o.pincode,
     principal: o.principal, emi: o.emi, disbursedOn: o.disbursedOn, name: b.name, phone: b.phone,
     business: b.business, address: b.address, village: b.village, lat: b.lat, lng: b.lng,
@@ -451,7 +482,7 @@ export async function checkAgainstDb(conn, companyId, valid, errors) {
   for (const v of valid) {
     const { loan } = v;
     const problems = [];
-    const warnings = [];
+    const warnings = [...(v.warnings || [])];
     const match = existing.get(loan.loanNo.toLowerCase());
     if (loan.officerCode === undefined) {
       const keep = match?.officer_code && match.branch === loan.branch && usable(match.officer_code, loan.branch) ? match.officer_code : null;

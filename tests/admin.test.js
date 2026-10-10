@@ -126,7 +126,7 @@ test('import: preview reports errors, commit creates then updates, tampering is 
   assert.deepEqual([again.created, again.updated], [0, 2]);
 
   const tampered = structuredClone(loans);
-  tampered[0].borrower.phone = '123';
+  tampered[0].principal = -5;
   const bad = await call('/api/admin/import/commit', { method: 'POST', body: { fileName: 'k.xlsx', loans: tampered } });
   assert.equal(bad.status, 422);
 

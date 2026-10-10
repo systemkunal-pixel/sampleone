@@ -257,6 +257,9 @@ read as a recovery list. Each account gets one amount due (the total overdue) si
 lender's first word (`VFS CAPITAL LIMITED` → `VFS`), and the product is lender · asset class · rate. State, District and
 PIN Code are kept on every account.
 
+No row of a recovery list is rejected for bad data. A wrong or missing mobile number is kept as given, and a missing
+name, overdue amount or date is filled in as well as possible. Each case is listed as a warning in the preview.
+
 When a file has no Officer column, re-importing keeps each account's current officer. New accounts go to the agent
 deputed to their pincode in **Areas** (State → District → Pincode), if there is one.
 

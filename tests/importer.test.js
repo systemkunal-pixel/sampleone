@@ -112,12 +112,25 @@ test('a recovery list imports as one overdue amount per account, with state, dis
     { acct: 'D000001A', name: 'TEST BORROWER ONE', pin: 711302, district: 'HOWRAH', phone: 9800000001, due: 26530 },
     { acct: 'D000002B', name: 'TEST BORROWER TWO', pin: '721429', district: 'EAST MEDINIPORE', phone: 1234567890 },
     { acct: 'D000003C', name: 'TEST BORROWER THREE', pin: 711302, district: 'HOWRAH', phone: 9800000003, os: 0, due: 5000, cls: 'sma1' },
+    { acct: 'D000004D', name: '', pin: 'N/A', district: 'HOWRAH', phone: '', os: 7000, due: 0, since: 'not known' },
+    { acct: 'D000005E', name: 'TEST BORROWER FIVE', pin: 711302, district: 'HOWRAH', phone: 9800000005, os: 0, due: 0 },
   ]);
   const parsed = await readImportFile('VFS Borrower Details.xlsx', buf);
   assert.deepEqual(parsed.missingHeaders, []);
   const { valid, errors } = normalise(parsed);
-  assert.deepEqual(errors.map((e) => [e.loanNo, e.errors]), [['D000002B', ['Phone "1234567890" is not a valid 10-digit mobile number.']]]);
-  const [a, c] = valid.map((v) => v.loan);
+  assert.deepEqual(errors, [], 'no row is rejected for bad data');
+  const [a, b, c, d, e] = valid.map((v) => v.loan);
+  const warn = valid.map((v) => v.warnings);
+  assert.equal(b.borrower.phone, '1234567890', 'a wrong number is kept as given');
+  assert.match(warn[1][0], /not a valid 10-digit mobile number; imported as given/);
+  assert.deepEqual([d.borrower.name, d.borrower.phone, d.pincode, d.principal], ['Name not given', '', null, 7000]);
+  assert.equal(d.installments[0].amount, 7000, 'no overdue amount: the outstanding is used');
+  assert.equal(warn[3].length, 4, warn[3].join(' | '));
+  assert.deepEqual(e.installments, [], 'nothing due at all: imported anyway');
+  assert.equal(e.source, 'recovery');
+  // The commit step re-checks the loans exactly as the preview produced them.
+  const again = normalise({ records: valid.map((v, i) => ({ rowNo: i + 1, sheet: 'Import', structured: v.loan })), installments: [] });
+  assert.deepEqual(again.errors, []);
   assert.equal(a.branch, 'VFS');
   assert.equal(a.product, 'VFS · NPA · 18%');
   assert.equal(c.product, 'VFS · SMA1 · 18%');
