@@ -3,7 +3,7 @@
 import { api, download } from '../api.js';
 import { esc, icon, inr, inrShort, num, toast, dialog, emptyState, helpButton } from '../ui.js';
 import { t, tr } from '../../../i18n/i18n.js';
-import { route, setQuery } from '../main.js';
+import { route, setQuery, settings } from '../main.js';
 
 let selected = new Set(); // pincodes ticked for a bulk deputation
 let open = new Set(); // expanded states and districts
@@ -294,8 +294,10 @@ function renderAgents(el, data, users) {
 // ---------- recruitment plan ----------
 
 async function renderPlan(el, q, data, alive) {
+  // Defaults: the company's accounts per agent (Team → Settings); a planned agent below 40% of it is a thin area.
+  const max = q.get('max') || String(settings().accountsPerAgent || 25);
   const params = new URLSearchParams({
-    ...(data.client ? { client: data.client } : {}), km: q.get('km') || '20', max: q.get('max') || '250', min: q.get('min') || '20', scope: q.get('scope') || 'open',
+    ...(data.client ? { client: data.client } : {}), km: q.get('km') || '20', max, min: q.get('min') || String(Math.round(Number(max) * 0.4)), scope: q.get('scope') || 'open',
   });
   const plan = await api(`areas/plan?${params}`);
   if (!alive()) return;
@@ -318,7 +320,7 @@ async function renderPlan(el, q, data, alive) {
     <form class="toolbar" id="plan-form">
       ${clientSelect(data)}
       <label class="field inline"><span>${t('Range (km)')}</span><input class="input" name="km" type="number" min="1" max="200" value="${esc(params.get('km'))}" style="width:90px"></label>
-      <label class="field inline"><span>${t('Most accounts per agent')}</span><input class="input" name="max" type="number" min="10" max="5000" value="${esc(params.get('max'))}" style="width:100px"></label>
+      <label class="field inline"><span>${t('Most accounts per agent')}</span><input class="input" name="max" type="number" min="5" max="5000" value="${esc(params.get('max'))}" style="width:100px"></label>
       <label class="field inline"><span>${t('Smallest agent')}</span><input class="input" name="min" type="number" min="0" max="1000" value="${esc(params.get('min'))}" style="width:90px"></label>
       <select class="select" name="scope" aria-label="${esc(t('Pincodes'))}">
         <option value="open" ${params.get('scope') === 'open' ? 'selected' : ''}>${t('Pincodes without an agent')}</option>

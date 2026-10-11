@@ -1,5 +1,5 @@
 // Admin console API (/api/admin/*). Every route requires an admin session.
-import { loanStatus, isoDate, DPD_BUCKETS, toCSV } from '../src/js/logic.js';
+import { loanStatus, isoDate, DPD_BUCKETS, toCSV, lastContact, activePromise, countsTowardDues, outcomeLabel } from '../src/js/logic.js';
 import { hashPin, validPin, pinRule, verifyPin, SUPPORT_CODE } from './auth.js';
 import { companyEntitlements } from './plans.js';
 import { loadLoans, upsertLoan, withTx, audit, now } from './db.js';
@@ -8,6 +8,7 @@ import { EMAIL } from './mail.js';
 import { locate, within, recruitmentPlan } from './geo.js';
 import { registerTeamRoutes, deputeNearbyFor } from './team.js';
 import { registerBillingRoutes, resolveCircles } from './billing.js';
+import { getSettings, caseHistory } from './desk.js';
 import ExcelJS from 'exceljs';
 import { readImportFile, normalise, checkAgainstDb, buildTemplate, ImportError, MAX_FILE_BYTES, officerFits } from './importer.js';
 
@@ -30,13 +31,16 @@ function baseFields(b, role, current = {}) {
   return { pincode, range };
 }
 
-/** Admins may have an email address (password resets, summaries); field staff don't. */
+/**
+ * Email address: admins get password-reset links and the summary; State Heads and Coordinators get the evening
+ * team report. Only admins choose a summary frequency.
+ */
 function emailFields(b, role, current = {}) {
-  if (role !== 'admin') return { email: null, summary: current.summary_email || 'daily' };
   let email = b.email !== undefined ? str(b.email).toLowerCase() || null : current.email ?? null;
   if (email && (!EMAIL.test(email) || email.length > 190)) throw new HttpError(400, 'Enter a valid email address, or leave it empty.');
   const summary = b.summaryEmail !== undefined ? str(b.summaryEmail) : current.summary_email || 'daily';
-  if (!SUMMARY.includes(summary)) throw new HttpError(400, 'Choose how often to send the summary email.');
+  // Field staff: the evening team report is on (daily) or off.
+  if (!(role === 'admin' ? SUMMARY : ['daily', 'off']).includes(summary)) throw new HttpError(400, 'Choose how often to send the summary email.');
   return { email, summary };
 }
 
@@ -352,12 +356,30 @@ export function mountAdmin(router, { pool, authed, readJson }) {
       for (const g of got) source.set(g.id, JSON.parse(g.source_row));
     }
     const fileCols = [...new Set([...source.values()].flatMap((o) => Object.keys(o)))];
+    // Region → Area → Agent → Customer → Outstanding → Contact → PTP → Collection → Next action.
+    const next = new Map();
+    const today = isoDate();
+    for (let i = 0; i < ids.length; i += 2000) {
+      for (const l of await loadLoans(pool, { companyId: user.companyId, where: { sql: 'l.id IN (?)', args: [ids.slice(i, i + 2000)] } })) {
+        const last = lastContact(l);
+        const ptp = activePromise(l);
+        const lastPay = l.payments.filter(countsTowardDues).reduce((a, b) => (!a || b.at > a.at ? b : a), null);
+        next.set(l.id, [
+          last ? last.at.replace('T', ' ').slice(0, 16) : '', last ? last.type : '', last ? outcomeLabel(last.outcome) : '',
+          ptp && !ptp.kept ? ptp.ptpDate : '', ptp && !ptp.kept ? ptp.ptpAmount : '',
+          !ptp ? '' : ptp.kept ? 'Kept' : ptp.ptpDate < today ? 'Broken' : ptp.ptpDate === today ? 'Due today' : 'Open',
+          lastPay ? lastPay.at.slice(0, 10) : '', lastPay ? lastPay.amount : '',
+          l.followUpDate || '', ['', 'Difficult (coordinator)', 'Escalated (agency head)'][l.case?.level || 0],
+        ]);
+      }
+    }
     const csv = toCSV(
       ['Loan No', 'Client', 'Branch', 'Officer', 'Borrower', 'Phone', 'Village', 'State', 'District', 'Pincode', 'Product', 'Principal', 'EMI', 'Disbursed On',
-        'Outstanding', 'Overdue', 'DPD', 'Bucket', ...fileCols.map((c) => `File: ${c}`)],
+        'Outstanding', 'Overdue', 'DPD', 'Bucket', 'Last contact', 'Contact type', 'Last outcome', 'PTP date', 'PTP amount', 'PTP status',
+        'Last payment date', 'Last payment amount', 'Next follow-up', 'Case', ...fileCols.map((c) => `File: ${c}`)],
       rows.map((r) => [r.loanNo, clients.get(r.clientId) || '', r.branch, r.officerCode || '', r.borrower.name, r.borrower.phone, r.borrower.village || '',
         r.state || '', r.district || '', r.pincode || '', r.product, r.principal, r.emi, r.disbursedOn, r.outstanding, r.overdue, r.dpd, r.bucket,
-        ...fileCols.map((c) => source.get(r.id)?.[c] ?? '')]));
+        ...(next.get(r.id) || Array(10).fill('')), ...fileCols.map((c) => source.get(r.id)?.[c] ?? '')]));
     send(res, 200, Buffer.from(`﻿${csv}`, 'utf8'), {
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="loans-${isoDate()}.csv"`,
@@ -376,6 +398,7 @@ export function mountAdmin(router, { pool, authed, readJson }) {
       meta: {
         createdAt: meta.created_at, updatedAt: meta.updated_at, importFile: meta.file_name, importedAt: meta.imported_at, officerName: meta.officer_name,
         sourceRow: meta.source_row ? JSON.parse(meta.source_row) : null,
+        caseEvents: await caseHistory(pool, user.companyId, params.id),
       },
     };
   });
@@ -498,17 +521,22 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     });
   }
 
-  const planParams = (query) => ({
-    range: Math.min(200, Math.max(1, Number(query.get('km')) || 20)),
-    max: Math.min(5000, Math.max(10, Number(query.get('max')) || 250)),
-    min: Math.min(1000, Math.max(0, Number(query.get('min') ?? 20) || 0)),
-    open: query.get('scope') !== 'all',
-  });
+  // Defaults: the company's planning figure of accounts per agent (Team → Settings, 25 unless changed);
+  // a planned agent with fewer than 40% of that is listed as a thin area.
+  const planParams = (query, perAgent) => {
+    const max = Math.min(5000, Math.max(5, Number(query.get('max')) || perAgent));
+    return {
+      range: Math.min(200, Math.max(1, Number(query.get('km')) || 20)),
+      max,
+      min: Math.min(1000, Math.max(0, Number(query.get('min') ?? Math.round(max * 0.4)) || 0)),
+      open: query.get('scope') !== 'all',
+    };
+  };
 
   async function plan(user, query) {
     const clients = await areaClients(user.companyId);
     const client = clientParam(query, clients);
-    const p = planParams(query);
+    const p = planParams(query, (await getSettings(pool, user.companyId)).accountsPerAgent);
     const pins = (await pincodeFigures(user.companyId, client)).filter((x) => !p.open || !x.agent);
     const name = client ? clients.find((c) => String(c.id) === client).name : 'All clients';
     return { client, clientName: name, open: p.open, ...recruitmentPlan(pins, p) };

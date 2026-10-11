@@ -27,6 +27,8 @@
   --age-3: #2a78d6;
   --age-4: #1c5cab;
   --age-5: #104281;
+  --age-6: #0b3263;
+  --age-7: #072248;
   --focus: 0 0 0 3px rgb(15 81 50 / .28);
   --shadow-sm: 0 1px 2px rgb(16 24 20 / .06);
   --shadow: 0 1px 3px rgb(16 24 20 / .08), 0 1px 2px rgb(16 24 20 / .04);
@@ -65,6 +67,8 @@
     --age-3: #6da7ec;
     --age-4: #9ec5f4;
     --age-5: #cde2fb;
+    --age-6: #e2eefc;
+    --age-7: #f3f8fe;
     --focus: 0 0 0 3px rgb(44 156 102 / .4);
     --shadow: 0 1px 3px rgb(0 0 0 / .4);
     --shadow-lg: 0 18px 48px rgb(0 0 0 / .55);
@@ -645,3 +649,8 @@ details[open] > .area-head > .area-caret { transform: rotate(90deg); }
 .bill-row td:first-child { white-space: nowrap; }
 .bill-row.l1 td:first-child { padding-left: 34px; } .bill-row.l2 td:first-child { padding-left: 58px; } .bill-row.l3 td:first-child { padding-left: 82px; }
 .bill-row.l0 { font-weight: 650; } .bill-row.l3 { color: var(--text-2); }
+
+/* Recovery desk: seven ageing bands, 0–30 days to over 2 years */
+.ab-0 { background: var(--age-1); } .ab-1 { background: var(--age-2); } .ab-2 { background: var(--age-3); }
+.ab-3 { background: var(--age-4); } .ab-4 { background: var(--age-5); } .ab-5 { background: var(--age-6); } .ab-6 { background: var(--age-7); }
+.tabs .count { font-size: .75rem; color: var(--muted); margin-left: 4px; }

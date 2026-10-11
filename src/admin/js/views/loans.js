@@ -1,7 +1,7 @@
 import { api, download } from '../api.js';
 import {
   esc, icon, inr, inr2, num, date, dateTime, ageBadge, BUCKETS, toast, openDrawer, closeDrawer, drawerHead,
-  confirmDialog, emptyState, pager, helpButton,
+  confirmDialog, dialog, emptyState, pager, helpButton,
 } from '../ui.js';
 import { t, tr } from '../../../i18n/i18n.js';
 import { route, setQuery } from '../main.js';
@@ -11,10 +11,11 @@ const loansCount = (n) => (n === 1 ? t('1 loan') : t('{n} loans', { n: num(n) })
 // Visit outcomes (same labels as VISIT_OUTCOMES in the field app) and payment modes, translated where shown.
 /* i18n: t('Cash') t('UPI') t('Cheque') t('Bank transfer') t('Bank deposit') */
 /* i18n: t('Paid in full') t('Partial payment') t('Promise to pay') t('Borrower not available') t('Door locked')
-   t('Refused to pay') t('Disputes the dues') t('Shifted / not traceable') */
+   t('Refused to pay') t('Disputes the dues') t('Shifted / not traceable') t('Phone not answered / switched off') */
 const OUTCOMES = {
   PAID: 'Paid in full', PARTIAL: 'Partial payment', PTP: 'Promise to pay', NOT_AVAILABLE: 'Borrower not available',
   DOOR_LOCKED: 'Door locked', REFUSED: 'Refused to pay', DISPUTE: 'Disputes the dues', SHIFTED: 'Shifted / not traceable',
+  NO_ANSWER: 'Phone not answered / switched off',
 };
 const outcomeLabel = (code) => (OUTCOMES[code] ? t(OUTCOMES[code]) : code.replace(/_/g, ' ').toLowerCase());
 
@@ -110,6 +111,20 @@ function table(data, q) {
 
 // ---------- detail drawer ----------
 
+/* i18n: t('raised') t('escalated') t('resolved') */
+/** Difficult case: where it is, its history, and what an admin (the agency head) can do with it. */
+function caseSection(loan, meta) {
+  const c = loan.case;
+  const events = meta.caseEvents || [];
+  const buttons = !c ? [['raise', t('Mark as difficult case')]] : c.level === 1 ? [['escalate', t('Take over')], ['resolve', t('Resolve')]] : [['resolve', t('Resolve')]];
+  return `<section class="section">
+    <h3>${t('Difficult case')}</h3>
+    ${c ? `<p><span class="badge ${c.level >= 2 ? 'bad' : 'warn'}">${c.level >= 2 ? t('With the agency head') : t('With the coordinator')}</span> ${esc(c.note || '')}</p>` : `<p class="muted small">${t('Not a difficult case.')}</p>`}
+    ${events.length ? `<ul class="activity">${events.map((ev) => `<li><div class="what"><b>${esc(ev.by)}</b> ${esc(t(ev.action))}${ev.note ? `<div class="cell-sub">${esc(ev.note)}</div>` : ''}</div><span class="when">${dateTime(ev.at)}</span></li>`).join('')}</ul>` : ''}
+    <div class="actions" style="margin-top:8px">${buttons.map(([a, label]) => `<button class="btn sm" type="button" data-case="${a}">${esc(label)}</button>`).join(' ')}</div>
+  </section>`;
+}
+
 async function openLoan(id) {
   openDrawer(`${drawerHead(t('Loading…'))}<div class="drawer-body"><div class="empty">${t('Loading…')}</div></div>`);
   let res;
@@ -180,6 +195,8 @@ async function openLoan(id) {
         <dl class="dl">${Object.entries(meta.sourceRow || {}).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
       </details>` : ''}
 
+      ${caseSection(loan, meta)}
+
       <section class="section">
         <h3>${t('Payments ({n})', { n: loan.payments.length })}</h3>
         ${loan.payments.length ? `<div class="card table-wrap"><table class="data compact">
@@ -193,7 +210,7 @@ async function openLoan(id) {
       <section class="section">
         <h3>${t('Visits ({n})', { n: loan.visits.length })}</h3>
         ${loan.visits.length ? `<ul class="activity card">${[...loan.visits].reverse().slice(0, 20).map((v) => `
-          <li><div class="what"><b>${esc(outcomeLabel(v.outcome))}</b>${v.ptpDate ? ` · ${t('promised {amount} by {date}', { amount: inr(v.ptpAmount), date: date(v.ptpDate) })}` : ''}${v.notes ? `<div class="cell-sub">${esc(v.notes)}</div>` : ''}</div>
+          <li><div class="what">${v.contactType === 'call' ? `${t('Call:')} ` : ''}<b>${esc(outcomeLabel(v.outcome))}</b>${v.ptpDate ? ` · ${t('promised {amount} by {date}', { amount: inr(v.ptpAmount), date: date(v.ptpDate) })}` : ''}${v.notes ? `<div class="cell-sub">${esc(v.notes)}</div>` : ''}</div>
           <span class="when">${dateTime(v.at)}<br>${esc(v.officer)}</span></li>`).join('')}</ul>` : `<p class="muted">${t('No visits yet.')}</p>`}
       </section>
 
@@ -209,6 +226,25 @@ async function openLoan(id) {
         </details>
       </section>
     </div>`);
+
+  d.onclick = async (e) => {
+    const btn = e.target.closest('[data-case]');
+    if (!btn) return;
+    const action = btn.dataset.case;
+    const done = await dialog({
+      title: { raise: t('Mark as difficult case'), escalate: t('Take over the case'), resolve: t('Resolve the case') }[action],
+      body: `<label class="field"><span>${t('Note')}</span><textarea class="input" name="note" rows="3" maxlength="300" required placeholder="${esc(t('What happened, or why?'))}"></textarea></label>`,
+      ok: t('Save'),
+      onOk: async (f) => {
+        if (!String(f.note || '').trim()) throw new Error(t('Add a note: what happened, or why.'));
+        return api(`cases/${encodeURIComponent(loan.id)}`, { method: 'POST', body: { action, note: f.note } });
+      },
+    });
+    if (done) {
+      toast(t('Saved'));
+      openLoan(loan.id);
+    }
+  };
 
   d.onsubmit = async (e) => {
     e.preventDefault();

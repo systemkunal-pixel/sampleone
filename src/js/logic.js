@@ -9,7 +9,14 @@ export const VISIT_OUTCOMES = [
   { code: 'REFUSED', label: 'Refused to pay' },
   { code: 'DISPUTE', label: 'Disputes the dues' },
   { code: 'SHIFTED', label: 'Shifted / not traceable' },
+  { code: 'NO_ANSWER', label: 'Phone not answered / switched off' },
 ];
+
+/** Outcomes where the borrower (or family) was actually reached, and where they were not. */
+export const CONTACTED = new Set(['PAID', 'PARTIAL', 'PTP', 'REFUSED', 'DISPUTE']);
+export const NO_CONTACT = new Set(['NOT_AVAILABLE', 'DOOR_LOCKED', 'SHIFTED', 'NO_ANSWER']);
+/** How the borrower was approached: in person, or by phone. */
+export const CONTACT_TYPES = ['visit', 'call'];
 
 export const BANK_DEPOSIT = 'Bank deposit';
 export const PAYMENT_MODES = ['Cash', 'UPI', 'Cheque', 'Bank transfer', BANK_DEPOSIT];
@@ -260,6 +267,112 @@ export function portfolioSummary(loans, today = isoDate()) {
     outstanding = money(outstanding + st.outstanding);
   }
   return { buckets: Object.values(buckets), overdue, outstanding };
+}
+
+// ---------- recovery desk: daily report, dashboard figures ----------
+
+/** Ageing for recovery work: the usual DPD bands, with 90+ split further (recovery lists are mostly 90+). */
+export const AGE_BANDS = [
+  { key: '0-30', label: '0–30 days', min: 0, max: 30 },
+  { key: '31-60', label: '31–60 days', min: 31, max: 60 },
+  { key: '61-90', label: '61–90 days', min: 61, max: 90 },
+  { key: '91-180', label: '91–180 days', min: 91, max: 180 },
+  { key: '181-365', label: '181–365 days', min: 181, max: 365 },
+  { key: '1-2y', label: '1–2 years', min: 366, max: 730 },
+  { key: '2y+', label: 'Over 2 years', min: 731, max: Infinity },
+];
+export const ageBand = (dpd) => AGE_BANDS.find((b) => dpd >= b.min && dpd <= b.max) || AGE_BANDS[0];
+
+/** Status as it was at the end of `date`: dues up to that day, payments recorded up to that day. */
+export function statusOn(loan, date) {
+  return loanStatus({ ...loan, payments: loan.payments.filter((p) => p.at.slice(0, 10) <= date) }, date);
+}
+
+/** Monday of the week containing `date`, and the first day of its month. */
+export function weekStart(date) {
+  const dow = (new Date(`${date}T00:00:00`).getDay() + 6) % 7;
+  return addDays(date, -dow);
+}
+export const monthStart = (date) => `${date.slice(0, 7)}-01`;
+
+const isCall = (v) => v.contactType === 'call';
+
+/**
+ * One day's work, as in the agent's daily report. With `officer`, only that agent's accounts and only what
+ * they recorded; without, everything in `loans`. Payments count as a visit unless the account was only phoned.
+ */
+export function dailyReport(loans, date, officer = null) {
+  const r = {
+    date, assigned: 0, contacted: 0, visits: 0, calls: 0, ptpObtained: 0, ptpAmount: 0, collected: 0, receipts: 0,
+    ptpDueTomorrow: 0, ptpDueTomorrowAmount: 0, noContact: 0, notAttempted: 0, difficult: 0,
+  };
+  const tomorrow = addDays(date, 1);
+  for (const loan of loans) {
+    const mine = !officer || loan.officerCode === officer;
+    const byMe = (x) => !officer || x.officer === officer;
+    const pays = loan.payments.filter((p) => p.at.slice(0, 10) === date && countsTowardDues(p) && byMe(p));
+    const visits = loan.visits.filter((v) => v.at.slice(0, 10) === date && byMe(v));
+    const field = visits.some((v) => !isCall(v));
+    const called = visits.some(isCall);
+    const reached = pays.length > 0 || visits.some((v) => CONTACTED.has(v.outcome));
+    if (pays.length || visits.length) {
+      if (reached) r.contacted += 1;
+      else r.noContact += 1;
+      if (field || (pays.length && !called)) r.visits += 1;
+      if (called) r.calls += 1;
+    }
+    const ptps = visits.filter((v) => v.outcome === 'PTP');
+    if (ptps.length) {
+      r.ptpObtained += 1;
+      r.ptpAmount = money(r.ptpAmount + (ptps[ptps.length - 1].ptpAmount || 0));
+    }
+    r.receipts += pays.length;
+    r.collected = money(r.collected + pays.reduce((s, p) => s + p.amount, 0));
+    if (!mine) continue;
+    const st = loanStatus(loan, date);
+    if (st.closed && !pays.length) continue;
+    r.assigned += 1;
+    if (!pays.length && !visits.length) r.notAttempted += 1;
+    const ptp = activePromise(loan);
+    if (ptp && !ptp.kept && ptp.ptpDate === tomorrow) {
+      r.ptpDueTomorrow += 1;
+      r.ptpDueTomorrowAmount = money(r.ptpDueTomorrowAmount + (ptp.ptpAmount || 0));
+    }
+    if (loan.case?.level) r.difficult += 1;
+  }
+  return r;
+}
+
+/** The latest visit or call, and whether it reached the borrower (a later payment counts as reaching them). */
+export function lastContact(loan) {
+  const v = loan.visits.length ? loan.visits.reduce((a, b) => (a.at > b.at ? a : b)) : null;
+  const p = loan.payments.filter(countsTowardDues).reduce((a, b) => (!a || b.at > a.at ? b : a), null);
+  if (!v && !p) return null;
+  if (!v || (p && p.at >= v.at)) return { at: p.at, type: 'payment', outcome: 'PAID', reached: true };
+  return { at: v.at, type: isCall(v) ? 'call' : 'visit', outcome: v.outcome, reached: CONTACTED.has(v.outcome) };
+}
+
+/**
+ * Where each account stands for the coordinator's dashboard on `date`: overdue, ageing band, promise due or
+ * broken, no contact on the last attempt, never attempted, high value, difficult case.
+ */
+export function accountFacts(loan, date, highValue = Infinity) {
+  const st = loanStatus(loan, date);
+  const ptp = activePromise(loan);
+  const open = ptp && !ptp.kept ? ptp : null;
+  const last = lastContact(loan);
+  return {
+    st,
+    band: ageBand(st.dpd),
+    ptp: open,
+    ptpToday: Boolean(open && open.ptpDate === date),
+    ptpBroken: Boolean(open && open.ptpDate < date),
+    last,
+    noContact: Boolean(last && !last.reached),
+    untouched: !last,
+    highValue: st.overdue >= highValue && st.overdue > 0,
+    difficult: Boolean(loan.case?.level),
+  };
 }
 
 function csvCell(v) {

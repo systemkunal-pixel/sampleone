@@ -104,12 +104,14 @@ The installer then:
 - Sees the day's visit plan in priority order: promises due today, then broken promises, follow-ups, and the most overdue loans.
 - Collects payments (Cash, UPI, Cheque, Bank transfer) and issues GPS-stamped receipts.
 - Records **bank deposits** with a photo of the pay-in slip.
-- Logs visits and promises to pay.
+- Logs field visits and **phone calls**, promises to pay, and marks a **difficult case** for the coordinator.
+- Sees their own **daily report** (Summary), worked out from what they recorded, with progress against targets.
 - Works offline. Records are sent the moment the server is reachable, and the header shows **● Live**, **Sending…** or **Offline · N queued**.
 
-**Supervisor** (phone, PIN)
-- Verifies or rejects (with a reason) the bank deposits recorded in their branch, looking at the slip image. Automatic checks flag suspicious deposits.
-- Sees the branch accounts and a branch summary.
+**Supervisor** (phone, PIN) — State Heads and Coordinators of the field team, or a branch supervisor
+- **Team** dashboard: collections, recovery %, PTP due and broken, no-contact, high-value and difficult cases, ageing, and each agent's daily report.
+- Sets targets for their agents, moves accounts between their agents, escalates or resolves difficult cases.
+- Verifies or rejects (with a reason) the bank deposits recorded in their team or branch, looking at the slip image. Automatic checks flag suspicious deposits.
 
 **Admin** (admin console, password of 10+ characters, 12-hour sessions)
 - **Dashboard:** outstanding, overdue, PAR 30, today's and this month's collections, deposits awaiting verification, unassigned loans, portfolio ageing by days past due (DPD), branch performance and recent activity.
@@ -243,6 +245,37 @@ Home pincode, Range km, State, District, PIN), or add one person at a time.
   unassigned accounts in their districts. They also verify their team's bank deposits.
 
 The team is not tied to a client: an agent works every client's accounts in their pincodes.
+
+## Recovery desk: daily report, coordinator dashboard, targets, difficult cases
+
+Built around the agency's recommended structure (Agency Head → Regional Coordinator → Area Coordinators → Recovery Agents).
+Every figure is **worked out from what agents record** — nobody fills in a report.
+
+- **Post names:** Team → **Settings** sets the company's own names for the three posts (e.g. Regional Coordinator, Area
+  Coordinator, Recovery Agent), the **accounts per agent** (25 by default; the recruitment plan uses it, it is not a limit) and
+  the **high-value mark** (₹ overdue, ₹1,00,000 by default).
+- **Visit or call:** agents log a *Field visit* or a *Phone call*; "Phone not answered / switched off" is an outcome for calls.
+  Calls capture no GPS.
+- **Agent's daily report** (agency format): accounts assigned, customers contacted (reached: payment, promise, refusal or
+  dispute), visits made (a payment counts as a visit unless the account was only phoned), calls made, PTP obtained, amount
+  collected, PTP due tomorrow, no-contact cases, not attempted, difficult cases. On the agent's phone under Summary (with
+  **Send** to WhatsApp/SMS), and for every agent on the coordinator's dashboard and the admin's Recovery desk.
+- **Dashboard** (phone app → Team, for State Heads and Coordinators; admin console → Reports → **Recovery desk**, for the
+  whole company or one person's team, any day): total outstanding and overdue, today's / this week's / month-to-date
+  collection, **Recovery %** (collected this month ÷ overdue on the 1st), PTP due today, broken PTP, no contact on the last
+  attempt, never attempted, high-value accounts, difficult cases, ageing 0–30 / 31–60 / 61–90 / 91–180 / 181–365 days /
+  1–2 years / over 2 years, region-wise (State Heads), area-wise (Coordinators) and agent-wise tables, and the lists of
+  accounts to act on. The admin page downloads it all as Excel.
+- **Targets:** daily collection, daily visits, weekly and monthly collection per agent, from a date until replaced. Set by
+  the coordinator (their own agents only) or an admin; achievement % shows on the report and dashboard.
+- **Difficult cases:** an agent ticks *Difficult case* with a reason when logging a visit or call; the coordinator escalates
+  it to the agency head (admins) or resolves it; admins take over or resolve it in the Recovery desk or the loan drawer.
+  Every step needs a note and is kept with the account (and in the audit log).
+- **Allocation by coordinators:** on an account, a coordinator moves it to another agent of their own team.
+- **Evening report:** at 7:30 pm (after the 8 am – 7 pm contact hours) each State Head and Coordinator with an email address
+  gets their team's daily report by email; turn it off per person in Users.
+- **Loans export** gains the next action: last contact (date, visit/call, outcome), PTP date, amount and status, last payment,
+  next follow-up and case.
 
 ## Areas, agents and the recruitment plan
 
@@ -391,6 +424,8 @@ All endpoints except `login` and `health` need `Authorization: Bearer <token>`.
 | `POST /api/records` | officer | Payments and visits. Idempotent per record ID |
 | `GET /api/slips/:paymentId` | officer (own), supervisor (branch), admin | Deposit slip |
 | `GET /api/deposits?status=` · `POST /api/deposits/:id/decision` | supervisor | Verification queue and decisions |
+| `GET /api/desk?date=&under=` · `POST /api/desk/targets` · `POST /api/desk/assign` · `POST /api/desk/cases/:loanId` | supervisor | Team dashboard and daily report, targets, allocation within the team, difficult cases |
+| `GET /api/admin/desk` · `GET /api/admin/desk.xlsx` · `POST /api/admin/desk/targets` · `GET/POST /api/admin/cases/:loanId` · `GET/PUT /api/admin/settings` | admin | Recovery desk, Excel, targets, difficult cases, post names and team settings |
 | `GET /api/admin/summary` | admin | Dashboard figures |
 | `GET/POST /api/admin/users` · `PATCH /api/admin/users/:code` · `POST /api/admin/users/:code/reset-pin` | admin | User management |
 | `GET /api/admin/loans` · `GET/PATCH /api/admin/loans/:id` · `POST /api/admin/loans/assign` · `GET /api/admin/loans/export` | admin | Loans |
@@ -417,6 +452,7 @@ server/
   supervisor.js       updater agent: runs the server, applies staged updates
   updater.js patch.js update packages: build, verify, apply, roll back
   updates-api.js      Update & diagnostics endpoints
+  team.js desk.js     field team (hierarchy, import); recovery desk (dashboard, daily report, targets, cases, settings)
 scripts/patch.js      release tool: keygen, build, verify
   db.js schema.sql    MariaDB                admin.js      admin command-line tool
 deploy/               nginx, Caddy and systemd files

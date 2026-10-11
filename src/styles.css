@@ -413,3 +413,20 @@ img.logo { display: block; background: none; }
   .help-article { border: 0; }
   .help-btn { display: none; }
 }
+
+/* Team dashboard: ageing bands from 0–30 days to over 2 years */
+.age-0 { background: var(--b-current); }
+.age-1 { background: var(--b-1-30); }
+.age-2 { background: var(--b-31-60); }
+.age-3 { background: var(--b-61-90); }
+.age-4 { background: #b23a4c; }
+.age-5 { background: var(--b-90); }
+.age-6 { background: #5c0f1c; }
+.report { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.report th { text-align: left; font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.report th:last-child { text-align: right; }
+.report td { padding: 5px 0; border-bottom: 1px solid var(--line); }
+a.stat { color: inherit; text-decoration: none; }
+#desk-date, #desk-under { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); max-width: 60vw; }
+#assign-form select { flex: 1; font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); }
+#assign-form { gap: 8px; }

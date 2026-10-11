@@ -14,7 +14,8 @@ import { loadLoans, paymentFromRow, withTx, audit, now } from './db.js';
 import { acceptRecord, MAX_SLIP_BYTES } from './records.js';
 import { HttpError, send, readJson, Router } from './http.js';
 import { mountAdmin } from './admin-api.js';
-import { supervisorScope, scopeSql } from './team.js';
+import { supervisorScope, scopeSql, people, descendants } from './team.js';
+import { mountDesk, getSettings, currentTarget } from './desk.js';
 
 const STATIC_DIR = resolve(import.meta.dirname, '..', 'src');
 const MAX_BODY = Math.ceil(MAX_SLIP_BYTES * 1.4) + 64 * 1024; // one record with a base64 slip
@@ -110,7 +111,7 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR, mail
   router.add('GET', '/api/me', async (req) => {
     const { user } = await authed(req);
     const ent = await companyEntitlements(pool, user.companyId);
-    return { user: publicUser(user), plan: ent.plan, features: ent.features, maxOfficers: ent.maxOfficers };
+    return { user: publicUser(user), plan: ent.plan, features: ent.features, maxOfficers: ent.maxOfficers, settings: await getSettings(pool, user.companyId) };
   });
 
   /** Ends a support session early (the Exit button on the support banner). */
@@ -192,9 +193,24 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR, mail
       'SELECT receipt_no FROM payments WHERE company_id = ? AND officer_code = ? AND recorded_at >= ?',
       [user.companyId, user.code, `${today} 00:00:00`]);
     const { features } = await companyEntitlements(pool, user.companyId);
+    const settings = await getSettings(pool, user.companyId);
+    // Coordinators: the agents they can allocate accounts to and set targets for. Agents: their target.
+    let team = null;
+    let target = null;
+    if (user.role === 'officer') target = await currentTarget(pool, user.companyId, user.code, today);
+    else {
+      const all = await people(pool, user.companyId);
+      const me = all.get(user.code);
+      const below = me?.post ? descendants(all, user.code).map((c) => all.get(c)) : [...all.values()].filter((u) => u.branch === user.branch);
+      team = below.filter((u) => u.active && u.role === 'officer').map((u) => ({ code: u.code, name: u.name, parentCode: u.parent_code || null }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
     return {
-      user: publicUser(user),
+      user: { ...publicUser(user), post: (await pool.query('SELECT post FROM users WHERE id = ?', [user.id]))[0]?.post || null },
       features,
+      settings,
+      ...(team ? { team } : {}),
+      ...(user.role === 'officer' ? { target } : {}),
       loans,
       serverTime: now(),
       receiptSeq: { date: today, seq: lastReceiptSeq(todays.map((r) => r.receipt_no), user.code, today) },
@@ -282,6 +298,7 @@ export function createApp({ pool, sessionDays = 30, staticDir = STATIC_DIR, mail
   });
 
   mountAdmin(router, { pool, authed: (req) => authed(req, 'admin'), readJson: json });
+  mountDesk(router, { pool, authed, readJson: json });
   const leads = mountLeads(router, { pool, readJson: json, clientIp, mailer });
   mountOverlord(router, { pool, readJson: json, leads, mailer });
 

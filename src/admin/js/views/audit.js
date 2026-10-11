@@ -8,7 +8,9 @@ import { setQuery } from '../main.js';
    t('deactivated user') t('reset the PIN/password of') t('changed their password') t('imported loans — import #')
    t('reassigned loans to') t('verified deposit') t('rejected deposit') t('had a payment refused') t('had a visit refused')
    t('deputed an agent to pincodes:') t('removed the agent from pincodes —')
-   t('asked for a password-reset email') t('asked for a password reset, but has no email address') t('set a new password from the reset email') */
+   t('asked for a password-reset email') t('asked for a password reset, but has no email address') t('set a new password from the reset email')
+   t('set targets for') t('marked a difficult case:') t('escalated a difficult case to the agency head:') t('resolved a difficult case:')
+   t('changed the team settings') */
 const ACTIONS = {
   login: 'signed in',
   login_failed: 'failed to sign in',
@@ -29,6 +31,11 @@ const ACTIONS = {
   password_reset_requested: 'asked for a password-reset email',
   password_reset_no_email: 'asked for a password reset, but has no email address',
   password_reset_by_email: 'set a new password from the reset email',
+  targets_set: 'set targets for',
+  case_raised: 'marked a difficult case:',
+  case_escalated: 'escalated a difficult case to the agency head:',
+  case_resolved: 'resolved a difficult case:',
+  settings_updated: 'changed the team settings',
 };
 export const describe = (action) => (ACTIONS[action] ? t(ACTIONS[action]) : action.replace(/_/g, ' '));
 

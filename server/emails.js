@@ -4,10 +4,12 @@
 //   • support session started     → platform alert recipients, and the company when the overlord ticks "email the company"
 //   • admin password reset link   → that admin
 //   • daily / weekly summary      → each company admin who has an email address and wants it
+//   • evening team report         → each State Head and Coordinator who has an email address
 import { isoDate, addDays, localTimestamp } from '../src/js/logic.js';
 import { money } from './mail.js';
 import { portfolio } from './admin-api.js';
 import { now } from './db.js';
+import { deskData } from './desk.js';
 
 export const SUMMARY_HOUR = 8; // summaries go out from 8 am server time
 export const RESET_MINUTES = 30;
@@ -239,6 +241,7 @@ export function startMailJobs(pool, mailer, everyMs = 60000) {
     try {
       await sendUpdateResults(pool, mailer);
       await sendSummaries(pool, mailer);
+      await sendTeamReports(pool, mailer);
     } catch (err) {
       console.error('Email job:', err.message);
     } finally {
@@ -247,4 +250,70 @@ export function startMailJobs(pool, mailer, everyMs = 60000) {
   };
   setTimeout(tick, 15000).unref();
   return setInterval(tick, everyMs).unref();
+}
+
+// ---------- evening team report (State Heads and Coordinators) ----------
+
+export const TEAM_REPORT_AT = [19, 30]; // after the 8 am – 7 pm contact hours
+
+export function teamReportEmail(person, company, d, site) {
+  const T = d.totals;
+  const r = T.day;
+  const pct = (v) => (v == null ? '—' : `${v.toFixed(1)}%`);
+  const agentName = d.settings.posts.agent || 'Agent';
+  return {
+    to: person.email, kind: 'team_report', companyId: company.id,
+    subject: `LoanDesk daily report ${d.date}: ${money(T.collectedToday)} collected by your team`,
+    message: {
+      title: `Daily report · ${person.name}`,
+      intro: `Hello ${person.name}, here is how your team did today (${d.date}).`,
+      rows: [
+        ["Today's collection", `${money(T.collectedToday)} in ${r.receipts} receipt(s)`],
+        ['Customers contacted', `${r.contacted} (${r.visits} visits, ${r.calls} calls)`],
+        ['No contact', String(r.noContact)],
+        ['PTP obtained today', `${r.ptpObtained} (${money(r.ptpAmount)})`],
+        ['PTP due tomorrow', `${r.ptpDueTomorrow} (${money(r.ptpDueTomorrowAmount)})`],
+        ['Broken PTP', `${T.broken} (${money(T.brokenAmount)})`],
+        ['Month to date', money(T.collectedMonth)],
+        ['Recovery %', `${pct(T.recoveryPct)} of ${money(T.openingOverdue)} overdue on the 1st`],
+        ['Difficult cases', `${T.difficult}${T.escalated ? ` (${T.escalated} with the agency head)` : ''}`],
+        ['Total overdue', money(T.overdue)],
+      ],
+      table: d.agents.length ? {
+        head: [agentName, 'Accounts', 'Contacted', 'Visits', 'Calls', 'PTP', 'Collected', 'Month %'],
+        rows: d.agents.slice(0, 80).map((a) => [a.name, String(a.report.assigned), String(a.report.contacted), String(a.report.visits),
+          String(a.report.calls), String(a.report.ptpObtained), money(a.report.collected), pct(a.achievement?.month ?? null)]),
+      } : null,
+      button: site ? { label: 'Open the field app', url: `${site}/app/` } : null,
+      foot: 'You get this because your LoanDesk account has an email address. Ask your admin to turn the evening report off (Users → your name).',
+    },
+  };
+}
+
+/** Sends today's team report to State Heads and Coordinators with an email address, once, from 7:30 pm. */
+export async function sendTeamReports(pool, mailer, at = new Date()) {
+  if (at.getHours() * 60 + at.getMinutes() < TEAM_REPORT_AT[0] * 60 + TEAM_REPORT_AT[1]) return 0;
+  const s = await mailer.settings();
+  if (!s.configured || !s.summaries) return 0;
+  const today = isoDate(at);
+  const people = await pool.query(
+    `SELECT u.id, u.code, u.name, u.email, u.role, u.branch, u.company_id, c.code AS company_code, c.name AS company_name
+     FROM users u JOIN companies c ON c.id = u.company_id
+     WHERE u.role = 'supervisor' AND u.post IS NOT NULL AND u.active = 1 AND u.email IS NOT NULL AND u.summary_email <> 'off' AND c.status = 'active'`);
+  if (!people.length) return 0;
+  const done = new Set((await pool.query('SELECT dedupe_key FROM mail_log WHERE dedupe_key LIKE ?', [`team-report:${today}:%`])).map((r) => r.dedupe_key));
+  const site = await mailer.siteUrl();
+  let n = 0;
+  for (const p of people) {
+    const key = `team-report:${today}:${p.id}`;
+    // A failed send is renamed key#failed#id by the mailer; it is not retried the same evening.
+    if ([...done].some((k) => k === key || k.startsWith(`${key}#failed#`))) continue;
+    const user = { id: p.id, code: p.code, name: p.name, role: p.role, branch: p.branch, companyId: p.company_id };
+    const d = await deskData(pool, user, { date: today });
+    if (!d.agents.length) continue;
+    const company = { id: p.company_id, code: p.company_code, name: p.company_name };
+    const r = await mailer.send({ ...teamReportEmail(p, company, d, site), dedupeKey: key });
+    if (r.status === 'sent') n += 1;
+  }
+  return n;
 }

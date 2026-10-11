@@ -9,6 +9,7 @@ import * as areas from './views/areas.js';
 import * as clients from './views/clients.js';
 import * as team from './views/team.js';
 import * as billing from './views/billing.js';
+import * as desk from './views/desk.js';
 import * as importer from './views/import.js';
 import * as audit from './views/audit.js';
 import * as help from './views/help.js';
@@ -16,7 +17,7 @@ import * as help from './views/help.js';
 const $root = document.getElementById('root');
 
 // Labels stay English here and are translated where shown: t(p.label).
-/* i18n: t('Dashboard') t('Users') t('Team') t('Clients') t('Loans') t('Areas') t('Import loans') t('Billing') t('Reports') t('Audit log') t('Help & guides') */
+/* i18n: t('Dashboard') t('Users') t('Team') t('Clients') t('Loans') t('Areas') t('Import loans') t('Recovery desk') t('Billing') t('Reports') t('Audit log') t('Help & guides') */
 const PAGES = [
   { path: 'dashboard', label: 'Dashboard', icon: 'dashboard', view: dashboard },
   { path: 'users', label: 'Users', icon: 'users', view: users },
@@ -25,6 +26,7 @@ const PAGES = [
   { path: 'loans', label: 'Loans', icon: 'loans', view: loans },
   { path: 'areas', label: 'Areas', icon: 'map', view: areas },
   { path: 'import', label: 'Import loans', icon: 'upload', view: importer, needs: 'loan_import' },
+  { path: 'desk', label: 'Recovery desk', icon: 'target', view: desk },
   { path: 'billing', label: 'Billing', icon: 'sheet', view: billing },
   { path: 'audit', label: 'Audit log', icon: 'audit', view: audit, needs: 'audit_log' },
   { path: 'help', label: 'Help & guides', icon: 'help', view: help },
@@ -34,6 +36,19 @@ const PAGES = [
 // are hidden by CSS when the company's plan doesn't include it.
 let context = null;
 export const features = () => context?.features || {};
+/** Company settings: post names, accounts per agent, high-value mark (Team → Settings). */
+export const settings = () => context?.settings || { posts: {}, accountsPerAgent: 25, highValue: 100000 };
+export const setSettings = (s) => context && (context.settings = s);
+
+// i18n: t('State Head') t('District Coordinator') t('Agent') t('State Heads') t('District Coordinators') t('Agents')
+const POST_NAMES = { state_head: ['State Head', 'State Heads'], coordinator: ['District Coordinator', 'District Coordinators'], agent: ['Agent', 'Agents'] };
+/** The company's own name for a post, or the standard one (translated). */
+export function postLabel(post, plural = false) {
+  const own = settings().posts?.[post];
+  if (!own) return t(POST_NAMES[post]?.[plural ? 1 : 0] || post);
+  if (!plural) return own;
+  return /s$/i.test(own) ? own : /[^aeiou]y$/i.test(own) ? `${own.slice(0, -1)}ies` : `${own}s`;
+}
 
 async function loadContext() {
   context = await me();
@@ -261,11 +276,11 @@ function renderShell() {
           <div class="nav-label">${t('Manage')}</div>
           ${PAGES.slice(1, 7).map(navLink).join('')}
           <div class="nav-label">${t('Reports')}</div>
-          ${navLink(PAGES[7])}
+          ${PAGES.slice(7, 9).map(navLink).join('')}
           <div class="nav-label">${t('Compliance')}</div>
-          ${navLink(PAGES[8])}
-          <div class="nav-label">${t('Support')}</div>
           ${navLink(PAGES[9])}
+          <div class="nav-label">${t('Support')}</div>
+          ${navLink(PAGES[10])}
         </nav>
         <div class="sidebar-foot"><b>${esc(user.company.name)}</b><br>${t('Company code {company} · signed in as {user}', { company: esc(user.company.code), user: esc(user.code) })}<br>${t('Field app: {link}', { link: `<a href="../app/" target="_blank" rel="noopener">${t('open')}</a>` })}</div>
       </aside>

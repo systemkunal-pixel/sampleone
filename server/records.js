@@ -114,12 +114,25 @@ async function storeVisit(conn, user, loanId, r) {
   const ptpAmount = isPtp ? amountOf(r.ptpAmount) : null;
   if (isPtp && !ptpDate) reject('Promise date is required.');
   const followUp = optDate(r.followUpDate);
+  const contactType = r.contactType === 'call' ? 'call' : 'visit';
+  const notes = optStr(r.notes, 500);
+  if (r.difficult && !notes.trim()) reject('Say why this is a difficult case.');
   await conn.query(
-    `INSERT INTO visits (id, loan_id, recorded_at, outcome, notes, ptp_date, ptp_amount, follow_up_date, officer_code, location, received_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [r.id, loanId, sqlTs(r.at), r.outcome, optStr(r.notes, 500), ptpDate, ptpAmount, followUp, user.code, location(r.location), now()]
+    `INSERT INTO visits (id, loan_id, recorded_at, outcome, notes, ptp_date, ptp_amount, follow_up_date, officer_code, location, received_at, contact_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [r.id, loanId, sqlTs(r.at), r.outcome, notes, ptpDate, ptpAmount, followUp, user.code, location(r.location), now(), contactType]
   );
   await conn.query('UPDATE loans SET follow_up_date = ? WHERE id = ?', [followUp || ptpDate, loanId]);
+  // "Difficult case": the agent refers the account to their coordinator (once; it stays open until resolved).
+  if (r.difficult) {
+    const res = await conn.query(
+      'UPDATE loans SET case_level = 1, case_note = ?, case_at = ?, case_by = ? WHERE id = ? AND case_level = 0',
+      [notes.slice(0, 300), sqlTs(r.at), user.code, loanId]);
+    if (res.affectedRows) {
+      await conn.query('INSERT INTO case_events (company_id, loan_id, at, user_code, action, note) VALUES (?, ?, ?, ?, ?, ?)',
+        [user.companyId, loanId, sqlTs(r.at), user.code, 'raised', notes.slice(0, 300)]);
+    }
+  }
 }
 
 /**

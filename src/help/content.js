@@ -173,18 +173,19 @@ export const TOPICS = [
   },
   {
     id: 'log-visit', category: 'howto', audience: ['officer'],
-    title: 'Log a visit or a promise to pay',
-    summary: 'Record what happened when no money was collected.',
+    title: 'Log a visit, a call or a promise to pay',
+    summary: 'Record what happened when no money was collected — in person or by phone.',
     steps: [
-      'Open the account and tap <b>Log visit</b>.',
-      'Choose the outcome: <b>Promise to pay</b>, Borrower not available, Door locked, Refused to pay, Disputes the dues, or Shifted / not traceable.',
+      'Open the account and tap <b>Log visit or call</b>. Choose <b>Field visit</b> or <b>Phone call</b>.',
+      'Choose the outcome: <b>Promise to pay</b>, Borrower not available, Door locked, Refused to pay, Disputes the dues, Shifted / not traceable, or Phone not answered / switched off.',
       'For a <b>Promise to pay</b>, enter the promised date (up to 30 days ahead) and amount.',
       'Optionally set a <b>Next follow-up</b> date and write notes (who you met, what was said).',
-      'Tap <b>Save visit</b>.',
+      'Tap <b>Save</b>.',
     ],
     tips: [
       'Collected money? Use <b>Collect payment</b> instead — it counts as the visit too.',
       'On the promised date the account jumps to the top of your visit plan as <b>PTP due today</b>; if it passes unpaid it shows <b>Broken PTP</b>.',
+      'A borrower who refuses, threatens or denies the loan: tick <b>Difficult case</b> and say why in the notes. Your coordinator sees it at once and can take it to the agency head.',
     ],
   },
   {
@@ -457,6 +458,67 @@ export const TOPICS = [
       'Next month’s file: new accounts in a pincode that has an agent are assigned to that agent automatically; existing accounts keep their agent.',
       'Use <b>Pincodes without an agent</b> to see what is still open. Click a pincode to see its accounts in <b>Loans</b>.',
       '<b>Recruitment plan</b> shows where to hire agents so that every pincode is within the range (20 km by default) of one, with at most the number of accounts you set per agent. Download it as Excel for the hiring team. After hiring, enter the agent’s <b>home pincode</b> in Users and use <b>Agents → Pincodes in range</b>.',
+    ],
+  },
+  {
+    id: 'daily-report', category: 'howto', audience: ['officer'],
+    title: 'Your daily report',
+    summary: 'The agency’s daily report, filled in for you from what you record.',
+    steps: [
+      'Open <b>Summary</b>. The <b>Daily report</b> at the top shows accounts assigned, customers contacted, visits and calls made, PTP obtained, amount collected, PTP due tomorrow, no-contact cases, accounts not attempted and difficult cases.',
+      'Nothing to fill in: it is worked out from the payments, visits and calls you record during the day.',
+      'Tap <b>Send</b> to share it on WhatsApp or by SMS, if your coordinator asks for it.',
+    ],
+    tips: [
+      '<b>Customers contacted</b> counts the borrowers you actually reached: a payment, a promise, a refusal or a dispute. Not available, door locked, shifted and phone not answered are <b>no-contact</b> cases.',
+      'If your coordinator set targets, your progress for today, this week and this month shows below the report.',
+    ],
+  },
+  {
+    id: 'team-dashboard', category: 'howto', audience: ['supervisor', 'admin'],
+    title: 'Team dashboard for State Heads and Coordinators',
+    summary: 'Your team’s collections, promises, no-contact and difficult cases, and each agent’s daily report.',
+    steps: [
+      'Open <b>Team</b> in the phone app. The tiles show today’s collection, month to date, recovery %, total overdue, customers contacted, PTP due today, broken PTP, no contact, high-value accounts and difficult cases.',
+      'Below are your <b>agents’ daily reports</b>: contacted, visits, calls, PTP and amount collected. Tap an agent for the full report, their targets and the accounts to follow up.',
+      'Open <b>Accounts to act on</b> for the lists: PTP due today, broken PTP, no contact on the last attempt, high value and difficult cases. Tap an account to open it.',
+      'On an account you can <b>move it to another agent</b> of your team, or handle a <b>difficult case</b>: escalate it to the agency head or mark it resolved, always with a note.',
+      'A State Head also sees each Coordinator’s area: choose a name at the top to see only that team. Change the <b>Day</b> to look back.',
+    ],
+    tips: [
+      'Recovery % = collected this month ÷ overdue on the 1st of the month.',
+      'With an email address on your account you also get your team’s daily report at 7:30 pm.',
+      'Offline? The last figures loaded are shown, with the time they were loaded.',
+    ],
+  },
+  {
+    id: 'team-targets', category: 'howto', audience: ['supervisor', 'admin'],
+    title: 'Set targets for agents',
+    summary: 'Daily, weekly and monthly collection targets and a daily visit target.',
+    steps: [
+      'Phone app: <b>Team → Set targets</b>. Admin console: <b>Recovery desk → Set targets</b>.',
+      'Tick the agents (all of them, or one), choose the date from which the target applies and fill in any of: daily collection, daily visits, weekly collection, monthly collection.',
+      'Tap <b>Save targets</b>. Agents see their progress under their daily report; you see it on the dashboard.',
+    ],
+    tips: [
+      'A target applies from its date until you set a new one — there is no need to repeat it every month.',
+      'Leave a box empty for no target of that kind.',
+    ],
+  },
+  {
+    id: 'recovery-desk', category: 'howto', audience: ['admin'],
+    title: 'Recovery desk',
+    summary: 'Every coordinator’s dashboard and every agent’s daily report, for the whole company or one team.',
+    steps: [
+      'Open <b>Reports → Recovery desk</b>. It shows the whole company; choose a State Head or Coordinator to see only their team, and a day to look back.',
+      'Check the tiles (collection, recovery %, PTP due and broken, no contact, high value, difficult cases) and the ageing, which is split beyond 90 days for recovery lists.',
+      'The tables show each region, area and agent. The agent table is the agency’s daily report, with targets and recovery %.',
+      '<b>Accounts to act on</b> lists PTP due today, broken PTP, no contact, high value and difficult cases. As agency head, <b>take over</b> or <b>resolve</b> difficult cases here.',
+      '<b>Download Excel</b> for the day: summary, daily report, regions, areas and every list.',
+    ],
+    tips: [
+      'Post names (for example Regional Coordinator, Area Coordinator, Recovery Agent), accounts per agent and the high-value mark are set in <b>Team → Settings</b>.',
+      'Recovery % = collected this month ÷ overdue on the 1st of the month. A payment counts for the agent who collected it.',
     ],
   },
   {

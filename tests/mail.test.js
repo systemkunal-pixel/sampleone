@@ -47,7 +47,7 @@ before(async () => {
     host: env.TEST_DB_HOST || '127.0.0.1', port: Number(env.TEST_DB_PORT) || 3306,
     user: env.TEST_DB_USER, password: env.TEST_DB_PASSWORD || '', database: env.TEST_DB_NAME, connectionLimit: 5,
   });
-  for (const t of ['circle_areas', 'circles', 'clients', 'area_agents', 'password_resets', 'mail_log', 'mail_settings', 'imports', 'audit_log', 'deposit_slips', 'visits', 'payments',
+  for (const t of ['targets', 'case_events', 'company_settings', 'circle_areas', 'circles', 'clients', 'area_agents', 'password_resets', 'mail_log', 'mail_settings', 'imports', 'audit_log', 'deposit_slips', 'visits', 'payments',
     'sessions', 'loans', 'users', 'companies', 'overlord_sessions', 'overlords', 'support_sessions', 'overlord_audit', 'plans',
     'plan_features', 'company_feature_overrides', 'platform_updates', 'platform_update_events', 'platform_state', 'leads']) {
     await pool.query(`DROP TABLE IF EXISTS ${t}`);
@@ -154,7 +154,7 @@ test('an admin resets a forgotten password with the emailed link, once', opts, a
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(outbox.length, 0);
 
-  // The admin adds an email address (and the field roles can't have one).
+  // The admin adds an email address. Field staff may have one too (the evening team report), but reset links go only to admins.
   const admin = (await login('ADMIN', 'Demo@Admin2026')).body.token;
   const A = (path, o = {}) => call(`/api/admin${path}`, { token: admin, ...o });
   assert.equal((await A('/users/ADMIN', { method: 'PATCH', body: { email: 'not valid' } })).status, 400);
@@ -162,7 +162,10 @@ test('an admin resets a forgotten password with the emailed link, once', opts, a
   assert.equal((await A('/users/FO27', { method: 'PATCH', body: { email: 'fo@company.test' } })).status, 200);
   const users = (await A('/users')).body.users;
   assert.equal(users.find((u) => u.code === 'ADMIN').email, 'admin@company.test');
-  assert.equal(users.find((u) => u.code === 'FO27').email, null);
+  assert.equal(users.find((u) => u.code === 'FO27').email, 'fo@company.test');
+  await call('/api/password/forgot', { method: 'POST', body: { code: 'FO27' } });
+  await settle();
+  assert.equal(outbox.length, 0, 'no reset link for field staff');
 
   const r = await call('/api/password/forgot', { method: 'POST', body: { code: 'admin' } });
   assert.equal(r.body.message, none.body.message);

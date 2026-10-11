@@ -33,9 +33,26 @@ function credentialField(role, required = true) {
     </label>`;
 }
 
-/** Admins only: an email address for password-reset links and the summary email. */
-function mailFields(u) {
+/**
+ * Admins: an email address for password-reset links and the summary email.
+ * Supervisors (State Heads, Coordinators): the team's daily report by email in the evening.
+ */
+function mailFields(u, role) {
   const freq = u?.summaryEmail || 'daily';
+  if (role === 'supervisor') {
+    return `
+    <div class="form-row">
+      <label class="field"><span>${t('Email')}</span>
+        <input class="input" name="email" type="email" maxlength="190" autocomplete="off" value="${esc(u?.email || '')}" placeholder="${esc(t('e.g. name@company.in'))}">
+        <span class="hint">${t('State Heads and Coordinators get their team’s daily report here at 7:30 pm.')}</span>
+      </label>
+      <label class="field"><span>${t('Evening team report')}</span>
+        <select class="select" name="summaryEmail">
+          ${[['daily', t('On')], ['off', t('Off')]].map(([v, l]) => `<option value="${v}" ${v === (freq === 'off' ? 'off' : 'daily') ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+        </select>
+      </label>
+    </div>`;
+  }
   return `
     <div class="form-row">
       <label class="field"><span>${t('Email')}</span>
@@ -93,7 +110,7 @@ function userForm(u) {
         <datalist id="branch-list">${cache.branches.map((b) => `<option value="${esc(b)}">`).join('')}</datalist>
         <span class="hint">${t('Leave empty for agents who work every client’s accounts in their pincodes. With a branch, officers only get that branch’s loans and supervisors verify its deposits.')}</span>
       </label>
-      <div data-mail-slot>${isAdmin(role) ? mailFields(u) : ''}</div>
+      <div data-mail-slot>${isAdmin(role) || role === 'supervisor' ? mailFields(u, role) : ''}</div>
       <div data-home-slot>${role === 'officer' ? homeFields(u) : ''}</div>
       <div data-cred-slot>${editing ? '' : credentialField(role)}</div>
       ${editing && u.role === 'officer' && u.loans ? `<div class="info-box">${icon('loans')} ${(() => {
@@ -118,8 +135,7 @@ function openUserForm(u) {
     if (e.target.name !== 'role') return;
     const role = e.target.value;
     const mail = d.querySelector('[data-mail-slot]');
-    if (isAdmin(role) && !mail.innerHTML.trim()) mail.innerHTML = mailFields(u);
-    if (!isAdmin(role)) mail.innerHTML = '';
+    mail.innerHTML = isAdmin(role) || role === 'supervisor' ? mailFields(u, role) : '';
     const home = d.querySelector('[data-home-slot]');
     if (role === 'officer' && !home.innerHTML.trim()) home.innerHTML = homeFields(u);
     if (role !== 'officer') home.innerHTML = '';
@@ -154,7 +170,7 @@ function openUserForm(u) {
           method: 'PATCH',
           body: {
             name: data.name, role: data.role, branch: data.branch, ...(data.pin ? { pin: data.pin } : {}),
-            ...(isAdmin(data.role) ? { email: data.email, summaryEmail: data.summaryEmail } : {}),
+            ...(isAdmin(data.role) || data.role === 'supervisor' ? { email: data.email, summaryEmail: data.summaryEmail } : {}),
             ...(data.role === 'officer' ? { basePincode: data.basePincode, rangeKm: data.rangeKm } : {}),
           },
         });

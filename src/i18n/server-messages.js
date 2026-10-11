@@ -186,4 +186,23 @@ export default [
   'Please fill in your name, organisation and mobile number.',
   'Enter a valid 10-digit mobile number.',
   'Enter a valid email address, or leave it empty.',
+
+  // server/desk.js, server/records.js (recovery desk)
+  'This person is not in your team.',
+  'Choose a valid date.',
+  'Choose today or an earlier day.',
+  'Targets must be amounts of 0 or more.',
+  'Choose the agents.',
+  '{codes} is not in your team.',
+  '{codes} are not in your team.',
+  'Choose the accounts.',
+  'Choose an agent of your team.',
+  'Some accounts are not in your team.',
+  'Unknown action.',
+  'Add a note: what happened, or why.',
+  'This case has already moved on. Refresh to see where it is.',
+  'This account is not a difficult case.',
+  'Accounts per agent must be a whole number from 1 to 2000.',
+  'The high-value mark must be an amount of 0 or more.',
+  'Say why this is a difficult case.',
 ];

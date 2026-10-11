@@ -1,6 +1,6 @@
 {
   "name": "loandesk",
-  "version": "1.5.4",
+  "version": "1.6.0",
   "description": "LoanDesk - loan recovery app for field officers, with supervisor verification and admin console (PWA + Node + MariaDB)",
   "type": "module",
   "private": true,

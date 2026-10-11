@@ -3,6 +3,7 @@
 import { api, download } from '../api.js';
 import { esc, icon, inr, num, toast, dialog, openDrawer, closeDrawer, drawerHead, emptyState, helpButton, initials } from '../ui.js';
 import { t, tr } from '../../../i18n/i18n.js';
+import { postLabel, settings, setSettings } from '../main.js';
 
 /* i18n: t('State Head') t('District Coordinator') t('Agent') t('State Heads') t('District Coordinators') t('Agents') */
 const POSTS = {
@@ -10,7 +11,7 @@ const POSTS = {
   coordinator: { label: 'District Coordinator', plural: 'District Coordinators', parent: 'state_head', cls: 'dc' },
   agent: { label: 'Agent', plural: 'Agents', parent: 'coordinator', cls: 'ag' },
 };
-const postBadge = (p) => `<span class="post ${POSTS[p].cls}">${esc(t(POSTS[p].label))}</span>`;
+const postBadge = (p) => `<span class="post ${POSTS[p].cls}">${esc(postLabel(p))}</span>`;
 const MAX_BYTES = 10 * 1024 * 1024;
 const added = (n) => (n === 1 ? t('1 person added.') : t('{n} people added.', { n: num(n) }));
 
@@ -32,8 +33,8 @@ function tabs(view) {
 
 function head() {
   return `<div class="page-head">
-    <div><h1>${t('Team')}</h1><p>${t('State Heads → District Coordinators → Agents. Everyone reports to one person above them, and the team works every client’s accounts.')}</p></div>
-    <div class="page-actions">${helpButton('team')}<a class="btn primary" href="#/team?view=import">${icon('plus')} ${t('Import people')}</a></div></div>`;
+    <div><h1>${t('Team')}</h1><p>${esc(t('{heads} → {coordinators} → {agents}. Everyone reports to one person above them, and the team works every client’s accounts.', { heads: postLabel('state_head', true), coordinators: postLabel('coordinator', true), agents: postLabel('agent', true) }))}</p></div>
+    <div class="page-actions">${helpButton('team')}<button class="btn" data-act="settings">${icon('edit')} ${t('Settings')}</button><a class="btn primary" href="#/team?view=import">${icon('plus')} ${t('Import people')}</a></div></div>`;
 }
 
 // ---------- hierarchy ----------
@@ -80,9 +81,9 @@ async function renderTree(el) {
   const c = data.counts;
   el.innerHTML = `${head()}${tabs('tree')}
     <div class="mini-kpis">
-      <div><span>${t('State Heads')}</span><b>${num(c.state_head)}</b></div>
-      <div><span>${t('District Coordinators')}</span><b>${num(c.coordinator)}</b></div>
-      <div><span>${t('Agents')}</span><b>${num(c.agent)}</b></div>
+      <div><span>${esc(postLabel('state_head', true))}</span><b>${num(c.state_head)}</b></div>
+      <div><span>${esc(postLabel('coordinator', true))}</span><b>${num(c.coordinator)}</b></div>
+      <div><span>${esc(postLabel('agent', true))}</span><b>${num(c.agent)}</b></div>
       <div><span>${t('Without a parent')}</span><b>${c.orphans ? `<span style="color:var(--warn)">${num(c.orphans)}</span>` : '0'}</b></div>
     </div>
     <section class="card">
@@ -94,6 +95,7 @@ async function renderTree(el) {
     <p class="muted small" style="margin-top:12px">${t('Figures add up the tree: a Coordinator’s are their agents’ totals, a State Head’s their Coordinators’. Unassigned = accounts in a Coordinator’s districts with no agent yet.')}</p>`;
 
   el.onclick = async (e) => {
+    if (e.target.closest('[data-act=settings]')) return openSettings(() => renderTree(el));
     const tg = e.target.closest('[data-toggle]');
     if (tg) {
       const k = tg.dataset.toggle;
@@ -121,6 +123,35 @@ async function renderTree(el) {
   };
 }
 
+// ---------- settings ----------
+
+/** Post names, the planning figure of accounts per agent, and the high-value mark. */
+async function openSettings(after) {
+  const s = settings();
+  const done = await dialog({
+    title: t('Team settings'),
+    ok: t('Save'),
+    body: `<div class="form">
+      <p class="muted">${t('Use your own names for the posts — for example Regional Coordinator, Area Coordinator, Recovery Agent. They show everywhere in LoanDesk. Leave empty for the standard names.')}</p>
+      ${[['state_head', 'State Head'], ['coordinator', 'District Coordinator'], ['agent', 'Agent']].map(([k, std]) => `
+        <label class="field"><span>${esc(t(std))}</span><input class="input" name="post_${k}" maxlength="40" value="${esc(s.posts?.[k] || '')}" placeholder="${esc(t(std))}"></label>`).join('')}
+      <div class="form-row">
+        <label class="field"><span>${t('Accounts per agent')}</span><input class="input" type="number" name="accountsPerAgent" min="1" max="2000" required value="${esc(s.accountsPerAgent)}">
+          <span class="hint">${t('The usual portfolio of one agent. Used by the recruitment plan; not a limit.')}</span></label>
+        <label class="field"><span>${t('High-value mark (₹ overdue)')}</span><input class="input" type="number" name="highValue" min="0" required value="${esc(s.highValue)}">
+          <span class="hint">${t('Accounts with at least this much overdue are listed as high value.')}</span></label>
+      </div></div>`,
+    onOk: (f) => api('settings', {
+      method: 'PUT',
+      body: { posts: { state_head: f.post_state_head, coordinator: f.post_coordinator, agent: f.post_agent }, accountsPerAgent: Number(f.accountsPerAgent), highValue: Number(f.highValue) },
+    }),
+  });
+  if (!done) return;
+  setSettings(done);
+  toast(t('Settings saved'));
+  after();
+}
+
 // ---------- import ----------
 
 function chain(parents, post, parentCode) {
@@ -131,7 +162,7 @@ function chain(parents, post, parentCode) {
     line.unshift(p);
     p = byCode.get(p.parentCode);
   }
-  return `<div class="chain"><span class="node">${t('Admin')}</span>${line.map((x) => `${icon('chevronRight')}<span class="node ${x.code === parentCode ? 'on' : ''}">${esc(x.name)} · ${esc(t(POSTS[x.post].label))}</span>`).join('')}${icon('chevronRight')}<span class="node new">${t('New {post}', { post: t(POSTS[post].plural) })}</span></div>`;
+  return `<div class="chain"><span class="node">${t('Admin')}</span>${line.map((x) => `${icon('chevronRight')}<span class="node ${x.code === parentCode ? 'on' : ''}">${esc(x.name)} · ${esc(postLabel(x.post))}</span>`).join('')}${icon('chevronRight')}<span class="node new">${t('New {post}', { post: postLabel(post, true) })}</span></div>`;
 }
 
 function chooser(parents) {
@@ -142,11 +173,11 @@ function chooser(parents) {
     <div class="grid two" style="grid-template-columns:1.1fr 1fr">
       <section class="card"><div class="card-head"><h2>${icon('users')} ${t('Who are you adding?')}</h2></div><div class="card-body form">
         <label class="field"><span>${t('Post')} <span class="req">*</span></span>
-          <select class="select" id="imp-post">${Object.entries(POSTS).map(([k, p]) => `<option value="${k}" ${k === imp.post ? 'selected' : ''}>${esc(t(p.label))}</option>`).join('')}</select>
+          <select class="select" id="imp-post">${Object.keys(POSTS).map((k) => `<option value="${k}" ${k === imp.post ? 'selected' : ''}>${esc(postLabel(k))}</option>`).join('')}</select>
           <span class="hint">${t('Everyone in the file gets this post.')}</span></label>
         ${want ? `<label class="field"><span>${t('Parent officer (reports to)')} <span class="req">*</span></span>
-          <select class="select" id="imp-parent">${options.length ? options.map((p) => `<option value="${esc(p.code)}" ${p.code === imp.parent ? 'selected' : ''}>${esc(p.name)} (${esc(p.code)}) · ${esc(t(POSTS[p.post].label))}${p.districts.length ? ` · ${esc(p.districts.join(', '))}` : p.states.length ? ` · ${esc(p.states.join(', '))}` : ''}</option>`).join('') : `<option value="">${t('— none yet —')}</option>`}</select>
-          <span class="hint">${options.length ? t('Only people one level up are listed.') : t('Add the {post} first.', { post: t(POSTS[want].label) })}</span></label>`
+          <select class="select" id="imp-parent">${options.length ? options.map((p) => `<option value="${esc(p.code)}" ${p.code === imp.parent ? 'selected' : ''}>${esc(p.name)} (${esc(p.code)}) · ${esc(postLabel(p.post))}${p.districts.length ? ` · ${esc(p.districts.join(', '))}` : p.states.length ? ` · ${esc(p.states.join(', '))}` : ''}</option>`).join('') : `<option value="">${t('— none yet —')}</option>`}</select>
+          <span class="hint">${options.length ? t('Only people one level up are listed.') : t('Add the {post} first.', { post: postLabel(want) })}</span></label>`
           : `<div class="info-box small">${t('State Heads report to the company admin.')}</div>`}
         <div class="field"><span>${t('Reporting line')}</span>${chain(parents, imp.post, want ? imp.parent : null)}</div>
         ${imp.post === 'agent' ? `<label class="field"><span>${t('Default range for agents (km)')}</span><input class="input" id="imp-range" type="number" min="1" max="200" value="${esc(imp.defaultRange)}" style="max-width:200px"><span class="hint">${t('Used when a row has no range.')}</span></label>` : ''}
@@ -175,7 +206,7 @@ function review() {
   const tile = (label, value, cls = '', sub = '') => `<div class="kpi ${cls}"><div class="label">${label}</div><div class="value">${num(value)}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
   const parentName = p.parent ? `${esc(p.parent.name)} (${esc(p.parent.code)})` : t('the company admin');
   return `
-    <div class="info-box" style="margin-bottom:16px"><div class="chain">${t('Adding')} <span class="node new">${num(p.rows.length)} ${esc(t(POSTS[p.post].plural))}</span> ${t('under')} <span class="node on">${parentName}</span></div></div>
+    <div class="info-box" style="margin-bottom:16px"><div class="chain">${t('Adding')} <span class="node new">${num(p.rows.length)} ${esc(postLabel(p.post, true))}</span> ${t('under')} <span class="node on">${parentName}</span></div></div>
     <section class="stat-row grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
       ${tile(t('Rows in file'), p.rows.length + p.errors.length)}
       ${tile(t('Ready'), p.rows.length)}
@@ -256,7 +287,7 @@ async function renderImport(el, q) {
 
   function addOne() {
     const d = openDrawer(`
-      ${drawerHead(t('Add one {post}', { post: t(POSTS[imp.post].label) }), t('Checked the same way as a file.'))}
+      ${drawerHead(t('Add one {post}', { post: postLabel(imp.post) }), t('Checked the same way as a file.'))}
       <form class="drawer-body form" id="one-form" novalidate>
         <div class="form-row">
           <label class="field"><span>${t('Name')} <span class="req">*</span></span><input class="input" name="name" required maxlength="100" autofocus></label>
@@ -309,6 +340,7 @@ async function renderImport(el, q) {
   };
   el.onclick = async (e) => {
     const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'settings') return openSettings(draw);
     if (act === 'template') download(`team/template?post=${imp.post}`, `team-${imp.post}-template.xlsx`).catch((ex) => toast(tr(ex.message), 'bad'));
     if (act === 'one') {
       if (POSTS[imp.post].parent && !imp.parent) return toast(t('Choose the parent officer first.'), 'bad');

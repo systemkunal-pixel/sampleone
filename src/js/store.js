@@ -13,6 +13,10 @@ function blank() {
   return {
     session: null, // { token, user: { code, name, role, branch, company: { code, name } }, expired? }
     features: {}, // what the company's plan includes, from the server
+    settings: {}, // company settings: post names, accounts per agent, high-value mark
+    team: [], // supervisors: the agents they can allocate to and set targets for
+    target: null, // agents: their current target
+    desk: null, // supervisors: the last team dashboard loaded, for viewing offline
     loans: [],
     outbox: [],
     rejected: [], // records the server refused: { id, type, loanId, summary, error, at }
@@ -134,6 +138,9 @@ export function refresh() {
       state.loans = applyOutbox(data.loans);
       state.session.user = data.user;
       state.features = data.features || {};
+      state.settings = data.settings || {};
+      state.team = data.team || [];
+      state.target = data.target || null;
       const local = state.receiptSeq.date === data.receiptSeq.date ? state.receiptSeq.seq : 0;
       state.receiptSeq = { date: data.receiptSeq.date, seq: Math.max(local, data.receiptSeq.seq) };
       net.lastRefreshMs = Date.now();
@@ -188,7 +195,7 @@ export function recordPayment(loanId, { id, amount, mode, reference, location, d
   return payment;
 }
 
-export function recordVisit(loanId, { outcome, notes, ptpDate, ptpAmount, followUpDate, location }) {
+export function recordVisit(loanId, { outcome, notes, ptpDate, ptpAmount, followUpDate, location, contactType = 'visit', difficult = false }) {
   const loan = getLoan(loanId);
   if (!loan) throw new Error(t('Loan not found'));
   const visit = {
@@ -201,10 +208,13 @@ export function recordVisit(loanId, { outcome, notes, ptpDate, ptpAmount, follow
     followUpDate: followUpDate || null,
     officer: user().code,
     location: location || null,
+    contactType: contactType === 'call' ? 'call' : 'visit',
+    ...(difficult ? { difficult: true } : {}),
     synced: false,
   };
   loan.visits.push(visit);
   loan.followUpDate = followUpDate || (outcome === 'PTP' ? ptpDate : null);
+  if (difficult && !loan.case) loan.case = { level: 1, note: visit.notes, at: visit.at, by: visit.officer };
   enqueue('visit', loanId, visit);
   save();
   return visit;
@@ -214,7 +224,7 @@ function summarise(item) {
   const r = item.record;
   const loan = getLoan(item.loanId);
   const who = loan ? `${loan.borrower.name} (${loan.loanNo})` : item.loanId;
-  return item.type === 'payment' ? `₹${r.amount} ${r.mode} · ${r.receiptNo} · ${who}` : `Visit · ${who}`;
+  return item.type === 'payment' ? `₹${r.amount} ${r.mode} · ${r.receiptNo} · ${who}` : `${r.contactType === 'call' ? 'Call' : 'Visit'} · ${who}`;
 }
 
 let flushing = null;
@@ -319,5 +329,34 @@ export async function slipBlob(paymentId) {
     return await call(`slips/${encodeURIComponent(paymentId)}`, { token: token(), raw: true });
   } catch {
     return null;
+  }
+}
+
+// ---------- team dashboard (State Heads, Coordinators) ----------
+
+/** The team dashboard for a day (and optionally one person's team). Kept for viewing offline. */
+export async function fetchDesk(date, under) {
+  const q = new URLSearchParams({ date, ...(under ? { under } : {}) });
+  try {
+    const data = await call(`desk?${q}`, { token: token() });
+    state.desk = { key: q.toString(), at: localTimestamp(), data };
+    save();
+    setNet(state.outbox.length ? 'pending' : 'online');
+    return { data, cached: false };
+  } catch (err) {
+    if (err instanceof OfflineError && state.desk?.key === q.toString()) return { data: state.desk.data, cached: state.desk.at };
+    return handleError(err);
+  }
+}
+
+/** Targets, allocation and difficult cases: done online, then the phone's data is refreshed. */
+export async function deskAction(path, body) {
+  try {
+    const res = await call(`desk/${path}`, { method: 'POST', token: token(), body });
+    await refresh().catch(() => {});
+    return res;
+  } catch (err) {
+    if (err instanceof OfflineError) throw new Error(t('You are offline. Try again when you have signal.'));
+    return handleError(err);
   }
 }

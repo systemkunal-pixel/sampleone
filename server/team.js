@@ -39,7 +39,7 @@ export const splitList = (v) => (v ? String(v).split(/;\s*/).filter(Boolean) : [
 // ---------- who is in whose team ----------
 
 /** All field users of a company with post/parent, as a Map code → user. */
-async function people(conn, companyId) {
+export async function people(conn, companyId) {
   return new Map((await conn.query(
     `SELECT id, code, name, role, branch, active, post, parent_code, phone, base_pincode, range_km, area_states, area_districts, last_login_at
      FROM users WHERE company_id = ? AND role <> 'admin'`, [companyId])).map((u) => [u.code, u]));
@@ -72,12 +72,18 @@ export function descendants(all, code) {
  * their branch, as before. Returns { officerCodes, districts } or { branch }.
  */
 export async function supervisorScope(conn, user) {
-  const [me] = await conn.query('SELECT post, area_districts FROM users WHERE id = ?', [user.id]);
+  const [me] = await conn.query('SELECT post FROM users WHERE id = ?', [user.id]);
   if (!me?.post) return { branch: user.branch };
-  const all = await people(conn, user.companyId);
-  const below = descendants(all, user.code).map((c) => all.get(c));
-  const officerCodes = below.filter((u) => u.role === 'officer').map((u) => u.code);
-  const districts = new Set(splitList(me.area_districts));
+  return scopeOfPerson(await people(conn, user.companyId), user.code);
+}
+
+/** The scope of anyone in the team (an agent: their own accounts). */
+export function scopeOfPerson(all, code) {
+  const me = all.get(code);
+  if (!me) return { officerCodes: [], districts: [] };
+  const below = descendants(all, code).map((c) => all.get(c));
+  const officerCodes = [...(me.role === 'officer' ? [me.code] : []), ...below.filter((u) => u.role === 'officer').map((u) => u.code)];
+  const districts = new Set(me.post === 'agent' ? [] : splitList(me.area_districts));
   for (const u of below) if (u.post === 'coordinator') splitList(u.area_districts).forEach((d) => districts.add(d));
   return { officerCodes, districts: [...districts] };
 }

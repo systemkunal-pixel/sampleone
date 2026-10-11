@@ -2,11 +2,13 @@ import {
   VISIT_OUTCOMES, PAYMENT_MODES, DPD_BUCKETS, BANK_DEPOSIT,
   isoDate, addDays, daysBetween, formatINR, money, loanStatus, allocate, activePromise, visitList,
   validatePayment, validateDeposit, distanceKm, daySummary, portfolioSummary, collectionsCSV, outcomeLabel,
+  dailyReport, weekStart, monthStart, countsTowardDues,
 } from './logic.js';
 import * as store from './store.js';
 import { prepareSlip, putSlip, deleteSlip } from './slips.js';
 import * as install from './install.js';
 import * as supervisor from './supervisor.js';
+import * as team from './team.js';
 import { viewHelp, viewHelpTopic, setHelpQuery } from './help.js';
 import { loadHelpLang } from '../help/content.js';
 import { t, tr, loadLang, getLang, langSelect } from '../i18n/i18n.js';
@@ -19,7 +21,7 @@ import {
  * Labels that come from logic.js (shared with the server) and are translated where they are shown.
  * i18n: t('Cash') t('UPI') t('Cheque') t('Bank transfer') t('Bank deposit')
  * i18n: t('Paid in full') t('Partial payment') t('Promise to pay') t('Borrower not available') t('Door locked')
- *       t('Refused to pay') t('Disputes the dues') t('Shifted / not traceable')
+ *       t('Refused to pay') t('Disputes the dues') t('Shifted / not traceable') t('Phone not answered / switched off')
  * i18n: t('Current') t('1–30 DPD') t('31–60 DPD') t('61–90 DPD') t('90+ DPD (NPA)')
  * Validation messages from logic.js (shown with tr(), which also matches the {placeholder} keys):
  * i18n: t('Enter an amount greater than zero.') t('Amount can have at most two decimal places.')
@@ -37,10 +39,10 @@ let here = null; // last known officer location
 let accountsFilter = { q: '', bucket: 'all' };
 const SEND_WAIT_MS = 8000; // how long a save waits for the server before falling back to the outbox
 
-// Tab labels are translated in renderNav: t('Today') t('Accounts') t('Summary') t('Settings') t('Deposits')
+// Tab labels are translated in renderNav: t('Today') t('Accounts') t('Summary') t('Settings') t('Deposits') t('Team')
 const NAV = {
   officer: [['#/', 'today', '📋', 'Today'], ['#/accounts', 'accounts', '👥', 'Accounts'], ['#/summary', 'summary', '📊', 'Summary'], ['#/settings', 'settings', '⚙️', 'Settings']],
-  supervisor: [['#/deposits', 'deposits', '🏦', 'Deposits'], ['#/accounts', 'accounts', '👥', 'Accounts'], ['#/summary', 'summary', '📊', 'Summary'], ['#/settings', 'settings', '⚙️', 'Settings']],
+  supervisor: [['#/team', 'team', '📈', 'Team'], ['#/deposits', 'deposits', '🏦', 'Deposits'], ['#/accounts', 'accounts', '👥', 'Accounts'], ['#/settings', 'settings', '⚙️', 'Settings']],
 };
 
 const isOfficer = () => store.user()?.role === 'officer';
@@ -132,7 +134,7 @@ function loanCard(loan, today, extra = '') {
       <div class="muted small">${esc(loan.loanNo)} · ${esc(placeOf(loan))} ${isOfficer() ? distanceText(loan) : `· ${esc(loan.officerCode || t('unassigned'))}`}</div>
       <div class="row between mt-s">
         <span>${t('Overdue')} <strong class="${st.overdue > 0 ? 'bad' : ''}">${formatINR(st.overdue)}</strong></span>
-        <span class="tags">${ptpTag(loan, today)}${extra}</span>
+        <span class="tags">${ptpTag(loan, today)}${team.caseTag(loan)}${extra}</span>
       </div>
     </a>`;
 }
@@ -298,7 +300,7 @@ function viewLoan(id) {
     ...loan.payments.map((p) => ({ at: p.at, html: paymentLine(loan, p), synced: p.synced })),
     ...loan.visits.map((v) => ({
       at: v.at,
-      html: `${t('Visit:')} <strong>${esc(t(outcomeLabel(v.outcome)))}</strong>${v.outcome === 'PTP' ? ` · ${esc(t('{amount} by {date}', { amount: formatINR(v.ptpAmount), date: fmtDate(v.ptpDate) }))}` : ''}${v.notes ? `<div class="muted small">${esc(v.notes)}</div>` : ''}`,
+      html: `${v.contactType === 'call' ? t('Call:') : t('Visit:')} <strong>${esc(t(outcomeLabel(v.outcome)))}</strong>${v.outcome === 'PTP' ? ` · ${esc(t('{amount} by {date}', { amount: formatINR(v.ptpAmount), date: fmtDate(v.ptpDate) }))}` : ''}${v.notes ? `<div class="muted small">${esc(v.notes)}</div>` : ''}`,
       synced: v.synced,
     })),
   ].sort((x, y) => y.at.localeCompare(x.at));
@@ -328,10 +330,13 @@ function viewLoan(id) {
 
     ${recoveryCard(loan)}
 
+    ${isOfficer() && loan.case ? `<p>${team.caseTag(loan)} <span class="small">${esc(loan.case.note || '')}</span></p>` : ''}
+    ${isOfficer() ? '' : team.loanTools(loan)}
+
     ${isOfficer() ? `
     <div class="actions sticky">
       <a class="btn primary big ${st.closed ? 'disabled' : ''}" href="#/loan/${esc(loan.id)}/pay">${t('Collect payment')}</a>
-      <a class="btn big" href="#/loan/${esc(loan.id)}/visit">${t('Log visit')}</a>
+      <a class="btn big" href="#/loan/${esc(loan.id)}/visit">${t('Log visit or call')}</a>
     </div>` : ''}
 
     <section>
@@ -387,9 +392,13 @@ function viewVisit(id) {
   if (!loan || !isOfficer()) return viewNotFound();
   const today = isoDate();
   return `
-    ${header(t('Log visit'), `#/loan/${loan.id}`, 'log-visit')}
+    ${header(t('Log visit or call'), `#/loan/${loan.id}`, 'log-visit')}
     <form id="visit-form" class="card form" data-loan="${esc(loan.id)}">
       <div class="muted">${esc(loan.borrower.name)} · ${esc(loan.loanNo)}</div>
+      <fieldset class="modes"><legend>${t('How')}</legend>
+        <label class="radio"><input type="radio" name="contactType" value="visit" checked> 🚶 ${t('Field visit')}</label>
+        <label class="radio"><input type="radio" name="contactType" value="call"> 📞 ${t('Phone call')}</label>
+      </fieldset>
       <label>${t('Outcome')}
         <select name="outcome" required>
           <option value="" disabled selected>${t('Select outcome…')}</option>
@@ -403,8 +412,9 @@ function viewVisit(id) {
       </div>
       <label>${t('Next follow-up')}<input name="followUpDate" type="date" min="${today}"></label>
       <label>${t('Notes')}<textarea name="notes" rows="3" maxlength="500" placeholder="${esc(t('What did the borrower say? Who did you meet?'))}"></textarea></label>
+      ${loan.case ? `<p class="small">${team.caseTag(loan)}</p>` : `<label class="radio"><input type="checkbox" name="difficult" value="1"> ${t('Difficult case — refer to my coordinator (say why in the notes)')}</label>`}
       <p class="error" id="visit-error" role="alert"></p>
-      <button class="btn primary big" type="submit">${t('Save visit')}</button>
+      <button class="btn primary big" type="submit">${t('Save')}</button>
     </form>`;
 }
 
@@ -447,6 +457,28 @@ function viewReceipt(loanId, paymentId) {
     </div>`;
 }
 
+/** The agent's daily report (worked out from what they recorded) and their progress against targets. */
+function officerReport(loans, today) {
+  const me = store.user();
+  const r = dailyReport(loans, today, me.code);
+  const ws = weekStart(today);
+  const ms = monthStart(today);
+  let week = 0;
+  let month = 0;
+  for (const p of loans.flatMap((l) => l.payments)) {
+    if (p.officer !== me.code || !countsTowardDues(p)) continue;
+    const d = p.at.slice(0, 10);
+    if (d >= ws && d <= today) week = money(week + p.amount);
+    if (d >= ms && d <= today) month = money(month + p.amount);
+  }
+  return `<section class="card">
+    <div class="row between"><h2>${t('Daily report')}</h2><button class="btn small" data-action="share-report">📤 ${t('Send')}</button></div>
+    ${team.reportTable(r)}
+    ${team.targetTable(store.getState().target, { today: r.collected, visits: r.visits, week, month })}
+    <p class="muted small">${t('Worked out from the payments, visits and calls you recorded today — nothing to fill in.')} <a href="#/help/daily-report">${t('How?')}</a></p>
+  </section>`;
+}
+
 function viewSummary() {
   const { loans } = store.getState();
   const today = isoDate();
@@ -454,7 +486,8 @@ function viewSummary() {
   const pf = portfolioSummary(loans, today);
   const maxCount = Math.max(1, ...pf.buckets.map((b) => b.count));
   return `
-    ${header(isOfficer() ? t('Summary') : t('Branch summary'), '', isOfficer() ? 'end-of-day' : 'branch-view')}
+    ${header(isOfficer() ? t('Summary') : t('Branch summary'), isOfficer() ? '' : '#/team', isOfficer() ? 'end-of-day' : 'branch-view')}
+    ${isOfficer() ? officerReport(loans, today) : ''}
     <section class="card">
       <h2>${esc(t('Today · {date}', { date: fmtDate(today) }))}</h2>
       <div class="big-number">${formatINR(day.collected)}</div>
@@ -537,7 +570,7 @@ function viewSettings() {
 // ---------- router ----------
 
 let routeSeq = 0;
-const FORM_ROUTES = /^(loan\/[^/]+\/(pay|visit)|deposit\/)/;
+const FORM_ROUTES = /^(loan\/[^/]+\/(pay|visit)|deposit\/|targets|team|agent\/)/;
 
 function renderNav(tab) {
   const items = NAV[store.user().role] || [];
@@ -568,7 +601,10 @@ async function route({ keepScroll = false } = {}) {
   const officer = isOfficer();
   let view;
   let tab = '';
-  if (!parts.length) [view, tab] = officer ? [viewToday, 'today'] : [() => supervisor.viewDeposits('pending'), 'deposits'];
+  if (!parts.length) [view, tab] = officer ? [viewToday, 'today'] : [() => team.viewTeam(), 'team'];
+  else if (parts[0] === 'team' && !officer) [view, tab] = [() => team.viewTeam(parts[1] || null), 'team'];
+  else if (parts[0] === 'agent' && !officer) [view, tab] = [() => team.viewAgent(parts[1]), 'team'];
+  else if (parts[0] === 'targets' && !officer) [view, tab] = [() => team.viewTargets(parts[1] || null), 'team'];
   else if (parts[0] === 'accounts') [view, tab] = [viewAccounts, 'accounts'];
   else if (parts[0] === 'summary') [view, tab] = [viewSummary, 'summary'];
   else if (parts[0] === 'settings') [view, tab] = [viewSettings, 'settings'];
@@ -675,10 +711,20 @@ async function saveVisit(form, data) {
     $err.textContent = t('Enter the promised date and amount.');
     return;
   }
+  const difficult = Boolean(data.difficult);
+  if (difficult && !data.notes.trim()) {
+    $err.textContent = t('Say in the notes why this is a difficult case.');
+    return;
+  }
+  const call = data.contactType === 'call';
   const btn = form.querySelector('[type=submit]');
   btn.disabled = true;
-  btn.textContent = t('Capturing location…');
-  const loc = await getPosition(5000);
+  // A call is made from anywhere: no location is captured for it.
+  let loc = null;
+  if (!call) {
+    btn.textContent = t('Capturing location…');
+    loc = await getPosition(5000);
+  }
   btn.textContent = t('Sending to server…');
   const v = store.recordVisit(form.dataset.loan, {
     outcome: data.outcome,
@@ -687,15 +733,17 @@ async function saveVisit(form, data) {
     ptpAmount: data.ptpAmount ? money(Number(data.ptpAmount)) : null,
     followUpDate: data.followUpDate || null,
     location: loc,
+    contactType: call ? 'call' : 'visit',
+    difficult,
   });
   const result = await sendNow(v.id);
   if (result.error) {
     $err.textContent = t('Server did not accept this: {error}', { error: tr(result.error) });
     btn.disabled = false;
-    btn.textContent = t('Save visit');
+    btn.textContent = t('Save');
     return;
   }
-  toast(result === 'sent' ? t('Visit saved on server') : t('Visit saved on phone · will send automatically'), result === 'sent' ? 'ok' : 'warn');
+  toast(result === 'sent' ? (call ? t('Call saved on server') : t('Visit saved on server')) : t('Saved on phone · will send automatically'), result === 'sent' ? 'ok' : 'warn');
   location.hash = `#/loan/${form.dataset.loan}`;
 }
 
@@ -705,6 +753,7 @@ document.addEventListener('submit', async (e) => {
   const data = Object.fromEntries(new FormData(form));
 
   if (await supervisor.handleSubmit(form, data)) return;
+  if (await team.handleSubmit(form, data, e.submitter)) return;
   if (form.id === 'pay-form') return savePayment(form, data);
   if (form.id === 'visit-form') return saveVisit(form, data);
   if (form.id === 'login-form') {
@@ -779,6 +828,18 @@ document.addEventListener('click', async (e) => {
       }
       break;
     }
+    case 'agent-accounts':
+      accountsFilter = { q: el.dataset.code, bucket: 'all' };
+      location.hash = '#/accounts';
+      break;
+    case 'share-report': {
+      const me = store.user();
+      const r = dailyReport(store.getState().loans, isoDate(), me.code);
+      const text = team.reportText(me.name, me.code, r);
+      if (navigator.share) navigator.share({ title: t('Daily report'), text }).catch(() => {});
+      else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener');
+      break;
+    }
     case 'export-csv': {
       const today = isoDate();
       download(`collections-${store.user().code}-${today}.csv`, collectionsCSV(store.getState().loans, today), 'text/csv');
@@ -851,6 +912,9 @@ document.addEventListener('input', (e) => {
 
 document.addEventListener('change', (e) => {
   const el = e.target;
+  const teamChange = team.handleChange(el);
+  if (teamChange === 'route') return route();
+  if (teamChange) return;
   if (el.form?.id === 'pay-form') document.getElementById('pay-error').textContent = '';
   if (el.name === 'mode' && el.form?.id === 'pay-form') {
     document.getElementById('ref-wrap').hidden = el.value === 'Cash' || el.value === BANK_DEPOSIT;

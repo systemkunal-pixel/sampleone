@@ -4,6 +4,7 @@ import {
   addMonths, daysBetween, loanStatus, allocate, activePromise, priorityScore, visitList,
   validatePayment, receiptNumber, distanceKm, daySummary, portfolioSummary, toCSV, bucketFor,
   validateDeposit, findDuplicateSlip, collectionsCSV, lastReceiptSeq,
+  dailyReport, accountFacts, statusOn, ageBand, lastContact, weekStart, monthStart,
 } from '../src/js/logic.js';
 import { seedLoans } from '../src/js/seed.js';
 
@@ -183,4 +184,69 @@ test('receipt numbering continues from the server', () => {
   const nos = ['R-FO27-261008-004', 'R-FO27-261008-011', 'R-FO31-261008-020', 'R-FO27-261007-030', 'R-HIST-1'];
   assert.equal(lastReceiptSeq(nos, 'FO27', '2026-10-08'), 11);
   assert.equal(lastReceiptSeq([], 'FO27', '2026-10-08'), 0);
+});
+
+// ---------- recovery desk ----------
+
+const at = (time) => `${TODAY}T${time}`;
+const dpay = (id, time, amount, officer = 'AG1', extra = {}) => ({ id, at: at(time), amount, mode: 'Cash', officer, ...extra });
+const dvisit = (id, time, outcome, officer = 'AG1', extra = {}) => ({ id, at: at(time), outcome, officer, contactType: 'visit', ...extra });
+
+test('daily report: contacted, visits, calls, no contact, PTP, collections — the agency format', () => {
+  const loans = [
+    makeLoan({ id: 'A', officerCode: 'AG1', visits: [dvisit('v1', '10:00:00', 'PTP', 'AG1', { ptpDate: '2026-10-09', ptpAmount: 1500 })] }),
+    makeLoan({ id: 'B', officerCode: 'AG1', visits: [dvisit('v2', '11:00:00', 'NO_ANSWER', 'AG1', { contactType: 'call' })] }),
+    makeLoan({ id: 'C', officerCode: 'AG1', visits: [dvisit('v3', '12:00:00', 'REFUSED', 'AG1', { contactType: 'call' })], case: { level: 1, note: 'threatens' } }),
+    makeLoan({ id: 'D', officerCode: 'AG1', visits: [dvisit('v4', '13:00:00', 'DOOR_LOCKED')] }),
+    makeLoan({ id: 'E', officerCode: 'AG1', payments: [dpay('p1', '14:00:00', 900)] }),
+    makeLoan({ id: 'F', officerCode: 'AG1' }),
+    // Another agent's account and work are not counted for AG1.
+    makeLoan({ id: 'G', officerCode: 'AG2', payments: [dpay('p2', '15:00:00', 700, 'AG2')], visits: [dvisit('v5', '15:00:00', 'PAID', 'AG2')] }),
+    // A rejected bank deposit is not a collection.
+    makeLoan({ id: 'H', officerCode: 'AG1', payments: [dpay('p3', '16:00:00', 500, 'AG1', { deposit: { verification: 'rejected' } })] }),
+  ];
+  const r = dailyReport(loans, TODAY, 'AG1');
+  assert.deepEqual(
+    [r.assigned, r.contacted, r.visits, r.calls, r.ptpObtained, r.ptpAmount, r.collected, r.receipts, r.ptpDueTomorrow, r.ptpDueTomorrowAmount, r.noContact, r.notAttempted, r.difficult],
+    [7, 3, 3, 2, 1, 1500, 900, 1, 1, 1500, 2, 2, 1],
+  );
+  const all = dailyReport(loans, TODAY);
+  assert.equal(all.assigned, 8);
+  assert.equal(all.collected, 1600);
+  assert.equal(all.contacted, 4);
+});
+
+test('a payment counts as a visit unless the account was only phoned that day', () => {
+  const phoned = makeLoan({ officerCode: 'AG1', payments: [dpay('p1', '11:00:00', 500)], visits: [dvisit('v1', '10:00:00', 'PTP', 'AG1', { contactType: 'call', ptpDate: TODAY, ptpAmount: 500 })] });
+  const r = dailyReport([phoned], TODAY, 'AG1');
+  assert.deepEqual([r.contacted, r.visits, r.calls], [1, 0, 1]);
+  const met = makeLoan({ officerCode: 'AG1', payments: [dpay('p1', '11:00:00', 500)] });
+  assert.deepEqual([dailyReport([met], TODAY, 'AG1').visits], [1]);
+});
+
+test('account facts: promise due or broken, no contact on the last attempt, high value, ageing band', () => {
+  const broken = makeLoan({ visits: [{ id: 'v', at: '2026-10-01T10:00:00', outcome: 'PTP', ptpDate: '2026-10-05', ptpAmount: 1000 }] });
+  const f = accountFacts(broken, TODAY, 2500);
+  assert.equal(f.ptpBroken, true);
+  assert.equal(f.ptpToday, false);
+  assert.equal(f.highValue, true, '₹4,000 overdue ≥ ₹2,500');
+  assert.equal(f.band.key, '91-180');
+  assert.equal(f.untouched, false);
+  // Paid after the promise: kept, and the payment counts as reaching the borrower.
+  const kept = { ...broken, payments: [{ id: 'p', at: '2026-10-04T10:00:00', amount: 1000, mode: 'Cash' }] };
+  assert.equal(accountFacts(kept, TODAY).ptpBroken, false);
+  assert.equal(lastContact(kept).reached, true);
+  const locked = makeLoan({ visits: [{ id: 'v', at: '2026-10-07T10:00:00', outcome: 'DOOR_LOCKED' }] });
+  assert.equal(accountFacts(locked, TODAY).noContact, true);
+  assert.equal(accountFacts(makeLoan(), TODAY).untouched, true);
+  assert.deepEqual([ageBand(0).key, ageBand(30).key, ageBand(91).key, ageBand(366).key, ageBand(731).key], ['0-30', '0-30', '91-180', '1-2y', '2y+']);
+});
+
+test('status on an earlier day ignores later payments; week and month start', () => {
+  const loan = makeLoan({ payments: [{ id: 'p', at: '2026-10-02T10:00:00', amount: 1000, mode: 'Cash' }] });
+  assert.equal(statusOn(loan, '2026-09-30').overdue, 3000);
+  assert.equal(statusOn(loan, TODAY).overdue, 3000, 'paid 1,000 of 4,000 due by 8 Oct');
+  assert.equal(weekStart('2026-10-08'), '2026-10-05', 'Monday');
+  assert.equal(weekStart('2026-10-05'), '2026-10-05');
+  assert.equal(monthStart('2026-10-08'), '2026-10-01');
 });

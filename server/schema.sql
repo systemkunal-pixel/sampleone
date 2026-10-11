@@ -465,3 +465,50 @@ ALTER TABLE loans ADD COLUMN IF NOT EXISTS circle_in_file VARCHAR(100) NULL;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS client_id INT UNSIGNED NULL;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS circle_id INT UNSIGNED NULL;
 UPDATE payments p JOIN loans l ON l.id = p.loan_id SET p.client_id = l.client_id WHERE p.client_id IS NULL AND l.client_id IS NOT NULL
+;
+
+-- v12: the recovery desk. Company settings (post names, the planning figure of accounts per agent, the
+-- high-value threshold), phone calls next to field visits, difficult cases that agents raise and
+-- coordinators escalate to the agency head, and standing collection targets per agent.
+CREATE TABLE IF NOT EXISTS company_settings (
+  company_id          INT UNSIGNED NOT NULL PRIMARY KEY,
+  post_labels         TEXT          NULL CHECK (post_labels IS NULL OR JSON_VALID(post_labels)),
+  accounts_per_agent  SMALLINT UNSIGNED NULL,
+  high_value          DECIMAL(14,2) NULL,
+  updated_by          VARCHAR(12)   NULL,
+  updated_at          DATETIME      NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS contact_type ENUM('visit', 'call') NOT NULL DEFAULT 'visit';
+
+-- case_level: 0 none, 1 difficult (with the coordinator), 2 escalated to the agency head.
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS case_level TINYINT UNSIGNED NOT NULL DEFAULT 0;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS case_note VARCHAR(300) NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS case_at DATETIME NULL;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS case_by VARCHAR(12) NULL;
+ALTER TABLE loans ADD KEY IF NOT EXISTS ix_loans_company_case (company_id, case_level);
+
+CREATE TABLE IF NOT EXISTS case_events (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id  INT UNSIGNED NOT NULL,
+  loan_id     VARCHAR(40)  NOT NULL,
+  at          DATETIME     NOT NULL,
+  user_code   VARCHAR(12)  NOT NULL,
+  action      ENUM('raised', 'escalated', 'resolved') NOT NULL,
+  note        VARCHAR(300) NULL,
+  KEY ix_case_events_loan (company_id, loan_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- A target applies from its date until the next one for the same agent.
+CREATE TABLE IF NOT EXISTS targets (
+  company_id    INT UNSIGNED  NOT NULL,
+  officer_code  VARCHAR(12)   NOT NULL,
+  from_date     DATE          NOT NULL,
+  day_amount    DECIMAL(12,2) NULL,
+  day_visits    SMALLINT UNSIGNED NULL,
+  week_amount   DECIMAL(14,2) NULL,
+  month_amount  DECIMAL(14,2) NULL,
+  set_by        VARCHAR(12)   NOT NULL,
+  set_at        DATETIME      NOT NULL,
+  PRIMARY KEY (company_id, officer_code, from_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

@@ -175,6 +175,7 @@ export function visitFromRow(r) {
     followUpDate: r.follow_up_date,
     officer: r.officer_code,
     location: json(r.location),
+    contactType: r.contact_type || 'visit',
     synced: true,
   };
 }
@@ -208,6 +209,7 @@ export function loanFromRow(r) {
     ...(r.pincode || r.district || r.state ? { area: { state: r.state, district: r.district, pincode: r.pincode } } : {}),
     ...(r.client_id ? { client: { id: r.client_id, code: r.client_code, name: r.client_name } } : {}),
     ...(recovery ? { recovery } : {}),
+    ...(r.case_level ? { case: { level: r.case_level, note: r.case_note, at: ts(r.case_at), by: r.case_by } } : {}),
     payments: [],
     visits: [],
   };
