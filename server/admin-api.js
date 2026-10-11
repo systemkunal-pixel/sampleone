@@ -343,10 +343,21 @@ export function mountAdmin(router, { pool, authed, readJson }) {
   R('GET', '/loans/export', async ({ res, query, user }) => {
     await requireFeature(pool, user.companyId, 'loan_export');
     const rows = filterLoans(await portfolio(pool, user.companyId, listParams(query)), query);
+    // Every column of the client's own file follows ours, headed "File: <its heading>", in the file's order.
+    const clients = new Map((await pool.query('SELECT id, name FROM clients WHERE company_id = ?', [user.companyId])).map((c) => [c.id, c.name]));
+    const source = new Map();
+    const ids = rows.map((r) => r.id);
+    for (let i = 0; i < ids.length; i += 1000) {
+      const got = await pool.query('SELECT id, source_row FROM loans WHERE company_id = ? AND id IN (?) AND source_row IS NOT NULL', [user.companyId, ids.slice(i, i + 1000)]);
+      for (const g of got) source.set(g.id, JSON.parse(g.source_row));
+    }
+    const fileCols = [...new Set([...source.values()].flatMap((o) => Object.keys(o)))];
     const csv = toCSV(
-      ['Loan No', 'Branch', 'Officer', 'Borrower', 'Phone', 'Village', 'Product', 'Principal', 'EMI', 'Disbursed On', 'Outstanding', 'Overdue', 'DPD', 'Bucket'],
-      rows.map((r) => [r.loanNo, r.branch, r.officerCode || '', r.borrower.name, r.borrower.phone, r.borrower.village || '',
-        r.product, r.principal, r.emi, r.disbursedOn, r.outstanding, r.overdue, r.dpd, r.bucket]));
+      ['Loan No', 'Client', 'Branch', 'Officer', 'Borrower', 'Phone', 'Village', 'State', 'District', 'Pincode', 'Product', 'Principal', 'EMI', 'Disbursed On',
+        'Outstanding', 'Overdue', 'DPD', 'Bucket', ...fileCols.map((c) => `File: ${c}`)],
+      rows.map((r) => [r.loanNo, clients.get(r.clientId) || '', r.branch, r.officerCode || '', r.borrower.name, r.borrower.phone, r.borrower.village || '',
+        r.state || '', r.district || '', r.pincode || '', r.product, r.principal, r.emi, r.disbursedOn, r.outstanding, r.overdue, r.dpd, r.bucket,
+        ...fileCols.map((c) => source.get(r.id)?.[c] ?? '')]));
     send(res, 200, Buffer.from(`﻿${csv}`, 'utf8'), {
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="loans-${isoDate()}.csv"`,

@@ -233,6 +233,10 @@ test('areas: a recovery list by pincode, agents deputed per pincode, new account
   const [row] = await pool.query("SELECT t_odue, os_amt, int_rate, asset_class, due_since, source_row FROM loans WHERE loan_no = 'V001'");
   assert.deepEqual([row.t_odue, row.os_amt, row.int_rate, row.asset_class, row.due_since], [26530, 26530, 18, 'NPA', '2024-10-05']);
   assert.equal(JSON.parse(row.source_row).PI_NAME, 'VFS CAPITAL LIMITED');
+  const exp = (await call(`/api/admin/loans/export?client=${vfs.id}`)).body.trim().split('\r\n');
+  assert.equal(exp.length, 4);
+  assert.match(exp[0], /,Client,.*,Pincode,.*File: PI_NAME,.*File: T_ODUE/);
+  assert.match(exp.find((l) => l.startsWith('V001')), /VFS Capital Limited.*VFS CAPITAL LIMITED/);
   assert.equal((await call('/api/admin/import/preview', { method: 'POST', body: { fileName: 'x.xlsx', base64: await recoveryList([]), clientId: 999 } })).status, 400);
 
   let areas = (await call('/api/admin/areas')).body;
