@@ -124,7 +124,7 @@ test('overlord saves SMTP settings; the password is stored encrypted and never r
   // A failure is reported with the server's reason and logged.
   failNext = '535 Authentication failed';
   const fail = await O('/mail/test', { method: 'POST', body: { to: 'me@datahaat.test' } });
-  assert.equal(fail.status, 502);
+  assert.equal(fail.status, 422);
   assert.match(fail.body.error, /535 Authentication failed/);
   const log = (await O('/mail')).body.log;
   assert.deepEqual(log.slice(0, 2).map((l) => l.status), ['failed', 'sent']);

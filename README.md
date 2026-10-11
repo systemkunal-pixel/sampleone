@@ -84,6 +84,8 @@ The installer then:
 
 **Updating from the overlord console:** put `UPDATE_PUBLIC_KEY` in `C:\websites\loandesk\app\.env` once, then use **Update & diagnostics**. Database backups before schema changes need `mariadb-dump.exe` on the server. If MariaDB runs on another machine, install the MariaDB client tools on the LoanDesk server.
 
+**"Updating" page instead of IIS's 502:** while LoanDesk restarts during an update, IIS shows `deploy/updating.html`, which reloads by itself once LoanDesk answers. Fresh installs set this up; on a server installed earlier, run once as Administrator: `powershell -ExecutionPolicy Bypass -File C:\websites\loandesk\app\scripts\iis-updating-page.ps1`.
+
 **When IIS already uses ports 80 and 443**, the installer uses IIS automatically (`-Web IIS`):
 - installs Microsoft's URL Rewrite and Application Request Routing modules if they're missing, after checking Microsoft's signature;
 - uses the IIS site **loandesk** (or creates it) bound to the domain, pointing it at `C:\websites\loandesk\site` (only a `web.config`, so IIS can never serve the program's own files), which redirects HTTP to HTTPS and forwards everything to LoanDesk on `127.0.0.1`. Your other IIS sites are not changed;

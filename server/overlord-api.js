@@ -260,7 +260,7 @@ export function mountOverlord(router, { pool, readJson, leads, mailer }) {
       },
     });
     await oaudit(pool, ctx, 'mail_test', null, { to: address, status: r.status });
-    if (r.status !== 'sent') throw new HttpError(502, `The test email was not sent: ${r.error}`);
+    if (r.status !== 'sent') throw new HttpError(422, `The test email was not sent: ${r.error}`);
     return { ok: true, to: address };
   });
 

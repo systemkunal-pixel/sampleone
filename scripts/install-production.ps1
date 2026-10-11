@@ -412,6 +412,9 @@ if ($Web -eq 'IIS') {
     Fail "-AppDir must not be inside the IIS site folder ($siteDir): IIS could then serve the program's own files."
   }
   New-Item -ItemType Directory -Force -Path $siteDir | Out-Null
+  # While LoanDesk updates or restarts, IIS shows this page instead of its own "502" error.
+  Copy-Item (Join-Path $AppDir 'deploy\updating.html') (Join-Path $siteDir 'updating.html') -Force
+  Set-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter 'system.webServer/httpErrors' -Name 'allowAbsolutePathsWhenDelegated' -Value 'True'
   Write-TextFile (Join-Path $siteDir 'web.config') @"
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Written by scripts/install-production.ps1: IIS in front of LoanDesk on 127.0.0.1:$Port. -->
@@ -441,6 +444,10 @@ if ($Web -eq 'IIS') {
         <requestLimits maxAllowedContentLength="52428800" />
       </requestFiltering>
     </security>
+    <httpErrors>
+      <remove statusCode="502" />
+      <error statusCode="502" path="$(Join-Path $siteDir 'updating.html')" responseMode="File" />
+    </httpErrors>
     <httpProtocol>
       <customHeaders>
         <add name="Strict-Transport-Security" value="max-age=31536000; includeSubDomains" />
