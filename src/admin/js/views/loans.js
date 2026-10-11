@@ -175,10 +175,10 @@ async function openLoan(id) {
         </dl>
       </section>
 
-      ${loan.recovery || meta.sourceRow ? `<section class="section">
-        <h3>${t('As in the client’s file')}</h3>
+      ${loan.recovery || meta.sourceRow ? `<details class="section fold">
+        <summary><h3>${icon('chevronRight', 'fold-caret')} ${t('As in the client’s file')}</h3></summary>
         <dl class="dl">${Object.entries(meta.sourceRow || {}).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
-      </section>` : ''}
+      </details>` : ''}
 
       <section class="section">
         <h3>${t('Payments ({n})', { n: loan.payments.length })}</h3>

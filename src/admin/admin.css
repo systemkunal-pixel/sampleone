@@ -370,6 +370,12 @@ dialog.dlg::backdrop { background: rgb(10 16 13 / .5); }
 .dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .section { margin-bottom: 24px; }
 .section > h3 { margin-bottom: 10px; font-size: .78rem; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.section.fold > summary { list-style: none; cursor: pointer; }
+.section.fold > summary::-webkit-details-marker { display: none; }
+.section.fold > summary > h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; font-size: .78rem; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.section.fold > summary:hover > h3 { color: var(--text); }
+.fold-caret { width: 14px; height: 14px; transition: transform .15s; }
+.section.fold[open] .fold-caret { transform: rotate(90deg); }
 .mini-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 22px; }
 .mini-kpis div { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .mini-kpis span { display: block; font-size: .72rem; color: var(--muted); }
