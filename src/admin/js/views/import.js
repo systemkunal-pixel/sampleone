@@ -1,5 +1,5 @@
 import { api, download } from '../api.js';
-import { esc, icon, inr, num, date, dateTime, toast, confirmDialog, emptyState, helpButton } from '../ui.js';
+import { esc, icon, inr, num, date, dateTime, toast, confirmDialog, dialog, emptyState, helpButton } from '../ui.js';
 import { t, tr } from '../../../i18n/i18n.js';
 
 const loansCount = (n) => (n === 1 ? t('1 loan') : t('{n} loans', { n: num(n) }));
@@ -35,6 +35,7 @@ const COLUMNS = [
 ];
 
 let state = { step: 'upload', preview: null, result: null };
+const COMMIT_PART = 500;
 let clientId = null; // remembered while the console is open; '' = our own loans
 let clients = [];
 
@@ -282,9 +283,28 @@ export async function render(el, q, alive) {
       btn.disabled = true;
       btn.textContent = t('Importing…');
       try {
-        state.result = await api('import/commit', {
-          method: 'POST', body: { fileName: p.fileName, totalRows: p.totalRows, clientId: p.client?.id ?? null, loans: p.rows.map((r) => r.loan) },
-        });
+        // Sent in parts so a big file never meets a proxy's size or time limit; see /import/commit.
+        let importId = null;
+        let saved = 0;
+        try {
+          for (let i = 0; i < n; i += COMMIT_PART) {
+            btn.textContent = t('Importing… {done} of {n}', { done: num(i), n: num(n) });
+            state.result = await api('import/commit', {
+              method: 'POST',
+              body: {
+                fileName: p.fileName, totalRows: p.totalRows, clientId: p.client?.id ?? null, importId,
+                last: i + COMMIT_PART >= n, loans: p.rows.slice(i, i + COMMIT_PART).map((r) => r.loan),
+              },
+            });
+            importId = state.result.importId;
+            saved = Math.min(n, i + COMMIT_PART);
+          }
+        } catch (ex) {
+          // Stays on screen (a toast is easy to miss): what failed, and how much was saved before it.
+          const body = `<p>${esc(tr(ex.message))}</p><p>${t('{done} of {n} accounts were saved. Run the import again to finish; accounts already saved are simply updated.', { done: num(saved), n: num(n) })}</p>`;
+          await dialog({ title: t('The import stopped'), body, cancel: null });
+          throw ex;
+        }
         state.step = 'done';
         const done = state.result.created + state.result.updated;
         toast(done === 1 ? t('Imported 1 loan') : t('Imported {n} loans', { n: num(done) }));

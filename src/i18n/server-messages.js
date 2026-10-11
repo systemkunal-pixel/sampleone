@@ -124,6 +124,7 @@ export default [
   'Choose a file to upload.',
   'Nothing to import.',
   '{n} loan(s) no longer pass validation (data changed since the preview?). Run the preview again.',
+  'This import was not started here. Run the preview again.',
 
   // server/importer.js
   'Could not read the Excel file. Save it as .xlsx (Excel Workbook) and try again.',

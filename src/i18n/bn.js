@@ -1192,4 +1192,8 @@ export default {
   "— none yet —": "— এখনও কেউ নেই —",
   "₹-first: Indian lakh grouping, IST dates, DPD buckets and PAR 30": "₹-কেন্দ্রিক: ভারতীয় লাখ-হিসাবে সংখ্যা, IST তারিখ, DPD বাকেট ও PAR 30",
   "● Live": "● লাইভ",
+  "Importing… {done} of {n}": "ইমপোর্ট হচ্ছে… {n}টির মধ্যে {done}টি",
+  "{done} of {n} accounts were saved. Run the import again to finish; accounts already saved are simply updated.": "{n}টির মধ্যে {done}টি অ্যাকাউন্ট সেভ হয়েছে। শেষ করতে আবার ইমপোর্ট চালান; যেগুলি সেভ হয়ে গেছে সেগুলি শুধু আপডেট হবে।",
+  "The import stopped": "ইমপোর্ট থেমে গেছে",
+  "This import was not started here. Run the preview again.": "এই ইমপোর্ট এখানে শুরু হয়নি। আবার প্রিভিউ চালান।",
 };

@@ -1192,4 +1192,8 @@ export default {
   "— none yet —": "— अभी कोई नहीं —",
   "₹-first: Indian lakh grouping, IST dates, DPD buckets and PAR 30": "₹ के हिसाब से बना: लाख-करोड़ वाली गिनती, IST तारीखें, DPD श्रेणियाँ और PAR 30",
   "● Live": "● लाइव",
+  "Importing… {done} of {n}": "इम्पोर्ट हो रहा है… {n} में से {done}",
+  "{done} of {n} accounts were saved. Run the import again to finish; accounts already saved are simply updated.": "{n} में से {done} खाते सेव हुए। पूरा करने के लिए इम्पोर्ट फिर से चलाएँ; जो खाते सेव हो चुके हैं वे बस अपडेट हो जाएँगे।",
+  "The import stopped": "इम्पोर्ट रुक गया",
+  "This import was not started here. Run the preview again.": "यह इम्पोर्ट यहाँ शुरू नहीं हुआ था। प्रीव्यू फिर से चलाएँ।",
 };

@@ -133,6 +133,16 @@ test('import: preview reports errors, commit creates then updates, tampering is 
   const { imports } = (await call('/api/admin/imports')).body;
   assert.equal(imports[0].file_name, 'k2.xlsx');
 
+  // A big file goes in parts: one import row adds them up; only the last part closes it.
+  const part1 = (await call('/api/admin/import/commit', { method: 'POST', body: { fileName: 'k3.xlsx', totalRows: 3, loans: loans.slice(0, 1), last: false } })).body;
+  const part2 = (await call('/api/admin/import/commit', { method: 'POST', body: { fileName: 'k3.xlsx', totalRows: 3, loans: loans.slice(1), importId: part1.importId, last: true } })).body;
+  assert.equal(part2.importId, part1.importId);
+  assert.deepEqual([part2.created, part2.updated, part2.skipped], [0, 2, 1]);
+  const [k3] = (await call('/api/admin/imports')).body.imports;
+  assert.deepEqual([k3.file_name, k3.updated, k3.skipped], ['k3.xlsx', 2, 1]);
+  const stray = await call('/api/admin/import/commit', { method: 'POST', body: { fileName: 'k3.xlsx', loans, importId: 999999 } });
+  assert.equal(stray.status, 400);
+
   const tpl = await fetch(`${base}/api/admin/import/template`, { headers: { Authorization: `Bearer ${admin}` } });
   assert.match(tpl.headers.get('content-type'), /spreadsheetml/);
 });

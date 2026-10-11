@@ -704,11 +704,20 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     return { fileName: name, format: parsed.format, totalRows: parsed.records.length, missingHeaders: [], rows, errors, client };
   });
 
+  // A large file is committed in parts (the browser sends ~500 accounts per request, so no single request
+  // runs into a proxy's size or time limit): the first part opens the import, later ones pass its id, and
+  // the part marked last links circles and writes the audit entry. Each part is its own transaction and
+  // re-importing the same file is harmless, so a failed part can simply be retried.
   R('POST', '/import/commit', async ({ req, user }) => {
     await requireFeature(pool, user.companyId, 'loan_import');
-    const { fileName, loans, totalRows, clientId } = await readJson(req, COMMIT_BODY);
+    const { fileName, loans, totalRows, clientId, importId = null, last = true } = await readJson(req, COMMIT_BODY);
     if (!Array.isArray(loans) || !loans.length) throw new HttpError(400, 'Nothing to import.');
     const client = await importClient(user.companyId, clientId);
+    let open = null;
+    if (importId !== null) {
+      [open] = await pool.query('SELECT id, client_id, user_code FROM imports WHERE company_id = ? AND id = ?', [user.companyId, Number(importId) || 0]);
+      if (!open || open.user_code !== user.code || (open.client_id ?? null) !== (client?.id ?? null)) throw new HttpError(400, 'This import was not started here. Run the preview again.');
+    }
     // Re-validate everything: the browser's copy is never trusted.
     const records = loans.map((l, i) => ({ rowNo: i + 1, sheet: 'Import', structured: l }));
     const { valid, errors } = normalise({ records, installments: [] }, { client });
@@ -719,14 +728,24 @@ export function mountAdmin(router, { pool, authed, readJson }) {
     return withTx(pool, async (conn) => {
       const created = rows.filter((r) => r.action === 'create').length;
       const updated = rows.length - created;
-      const skipped = Math.max(0, Number(totalRows || 0) - rows.length);
-      const res = await conn.query(
-        'INSERT INTO imports (company_id, at, user_code, file_name, total_rows, created, updated, skipped, client_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [user.companyId, now(), user.code, str(fileName).slice(0, 200) || 'upload', Number(totalRows) || rows.length, created, updated, skipped, client?.id ?? null]);
-      for (const r of rows) await upsertLoan(conn, user.companyId, r.loan, res.insertId);
-      if (client) await resolveCircles(conn, user.companyId, client.id);
-      await audit(conn, user, 'loans_imported', String(res.insertId), { file: fileName, created, updated, skipped, ...(client ? { client: client.code } : {}) });
-      return { importId: res.insertId, created, updated, skipped };
+      let id = open?.id;
+      if (id) {
+        await conn.query('UPDATE imports SET created = created + ?, updated = updated + ? WHERE id = ?', [created, updated, id]);
+      } else {
+        const res = await conn.query(
+          'INSERT INTO imports (company_id, at, user_code, file_name, total_rows, created, updated, skipped, client_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [user.companyId, now(), user.code, str(fileName).slice(0, 200) || 'upload', Number(totalRows) || rows.length, created, updated, 0, client?.id ?? null]);
+        id = res.insertId;
+      }
+      for (const r of rows) await upsertLoan(conn, user.companyId, r.loan, id);
+      const [sum] = await conn.query('SELECT total_rows, created, updated FROM imports WHERE id = ?', [id]);
+      const skipped = Math.max(0, Number(sum.total_rows) - sum.created - sum.updated);
+      if (last) {
+        await conn.query('UPDATE imports SET skipped = ? WHERE id = ?', [skipped, id]);
+        if (client) await resolveCircles(conn, user.companyId, client.id);
+        await audit(conn, user, 'loans_imported', String(id), { file: fileName, created: sum.created, updated: sum.updated, skipped, ...(client ? { client: client.code } : {}) });
+      }
+      return { importId: id, created: sum.created, updated: sum.updated, skipped };
     });
   });
 
